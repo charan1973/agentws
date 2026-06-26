@@ -208,17 +208,21 @@ agentws discover                              # refresh repo cache
 
 ## 9. Phasing
 
-### P0 — Workspace core *(in progress)*
+### P0 — Workspace core *(done — committed `678d95f`)*
 - [x] Cargo crate scaffold, CLI skeleton (clap)
-- [x] Config loading (`~/.config/agentws/config.toml`)
-- [x] Repo discovery + cache over configured roots
-- [x] `ratatui` fuzzy multi-select picker
-- [x] `git worktree add`/`remove`, default-branch detection
-- [x] Manifest (`workspace.json`) read/write
+- [x] Config loading (`~/.config/agentws/config.toml`, auto-writes an example)
+- [x] Repo discovery + skip-list over configured roots
+- [x] `ratatui` fuzzy multi-select picker (`fuzzy-matcher`)
+- [x] `git worktree add`/`remove`, default-branch detection, idempotent reuse
+- [x] Manifest (`workspace.json`) read/write + `flock`
 - [x] `new` / `list` / `status` / `open` / `delete`
 - [x] `AGENTS.md` scope stub injected at workspace root
-- [ ] Launch adapter: Claude Code from root (default agent)
-- [ ] End-to-end smoke test
+- [x] Launch adapter: Claude Code from root (default agent) — `agent::launch`
+- [x] End-to-end smoke test (`new`/`list`/`status`/`open`/`delete` verified)
+
+> Manual checks still owed: try the **interactive picker** in a real TTY
+> (`agentws new x` with no `--repos`), and a real `claude` launch (spawn path
+> is implemented but not yet run live against the agent).
 
 ### P1 — Adapters + quality of life
 - [ ] Codex / OpenCode / pi launchers, `--agent`
