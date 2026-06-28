@@ -1,10 +1,11 @@
-use crate::{config, manifest, worktree};
+use crate::manifest;
+use crate::worktree;
 use anyhow::{bail, Result};
 
 pub fn run(story: Option<String>) -> Result<()> {
     let story = match story {
         Some(s) => s,
-        None => match infer_story_from_cwd()? {
+        None => match manifest::infer_story_from_cwd()? {
             Some(s) => s,
             None => bail!("pass a story name: `agentws status <story>`"),
         },
@@ -41,15 +42,4 @@ pub fn run(story: Option<String>) -> Result<()> {
         }
     }
     Ok(())
-}
-
-fn infer_story_from_cwd() -> Result<Option<String>> {
-    let cwd = std::env::current_dir()?;
-    let base = config::workspaces_root()?;
-    if let Ok(rel) = cwd.strip_prefix(&base) {
-        if let Some(first) = rel.components().next() {
-            return Ok(Some(first.as_os_str().to_string_lossy().to_string()));
-        }
-    }
-    Ok(None)
 }

@@ -164,6 +164,13 @@ The hard part is **TTY contention**: the agent owns the terminal (it's a TUI), s
 the MCP server can't print a y/n prompt over it (MCP stdio is JSON-RPC, not a
 free stdin). Pragmatic v1:
 
+**Design note (v1 simplification):** instead of a long-running supervisor process
+watching the manifest, the MCP `request_repo` tool **fires the notification
+directly** when the agent calls it (it's a child of the agent and can run
+`osascript`). This removes a whole class of background-process lifecycle bugs
+while keeping the exact same UX. The tmux-inline variant (P3) is where a
+supervisor pane would return.
+
 1. **Agent** calls MCP tool `request_repo(name, reason?)` → writes a `pending`
    request to the manifest → returns *"queued; call `check_request(id)`"*.
 2. **Supervisor** (background process started by `agentws launch`) watches the
@@ -224,24 +231,26 @@ agentws discover                              # refresh repo cache
 > (`agentws new x` with no `--repos`), and a real `claude` launch (spawn path
 > is implemented but not yet run live against the agent).
 
-### P1 — Adapters + quality of life
-- [ ] Codex / OpenCode / pi launchers, `--agent`
-- [ ] Auto-wire `agentws mcp` into each agent's MCP config
-- [ ] `add` / `remove`, `archive` / `restore`
-- [ ] `--symlink node_modules,.env` + per-repo setup hooks
-- [ ] Shell completions + `agentws cd` wrapper
+### P1 — Adapters + quality of life *(done)*
+- [x] Codex / OpenCode / pi launchers via `--agent` (generic `agent::launch`)
+- [x] `mcp-config <agent>` prints wiring snippets (claude/codex/opencode/pi) — safer than auto-editing user configs
+- [x] `add` / `remove` (human-initiated expansion), `archive` / `restore`
+- [x] `launch` to (re)start an agent in an existing workspace
+- [x] `symlinks` config (glob) + `post_create` hook, applied on create/add/restore
+- [x] Shell completions (`completions`) + `init-shell` cd helper
 
-### P2 — Permission-gated expansion (the differentiator)
-- [ ] `agentws mcp` server: `list_available_repos`, `request_repo`, `check_request`
-- [ ] `request` / `approve` / `deny` / `pending` CLI
-- [ ] Supervisor watcher + macOS notifications
-- [ ] Approval → worktree-under-root + manifest update + path returned to agent
+### P2 — Permission-gated expansion (the differentiator) *(done)*
+- [x] `agentws mcp` server: `list_available_repos`, `request_repo`, `check_request` (hand-rolled stdio JSON-RPC 2.0)
+- [x] `request` / `approve` / `deny` / `pending` CLI
+- [x] macOS notification **fired directly from the MCP `request_repo` tool** (see design note below — supervisor dropped)
+- [x] Approval → worktree-under-root + manifest update + path returned to agent
+- [x] E2E verified: agent requests → `check_request` pending → `approve` → worktree on `feat/<story>` → `check_request` returns path, no restart
 
-### P3 — Seamless + pi-native
-- [ ] tmux inline approval (agent in one pane, supervisor in another)
-- [ ] SQLite manifest + request history
-- [ ] `agentws` **pi extension** (native request flow + optional scoped-grep guard)
-- [ ] env-file wiring between repos (multree-style)
+### P3 — Seamless + pi-native *(deferred — see note)*
+- [ ] tmux inline approval (agent in one pane, prompt in another)
+- [ ] SQLite manifest + request history (JSON+flock is fine for v1)
+- [ ] `agentws` **pi extension** (pi has no built-in MCP; MCP server covers claude/codex/opencode; pi needs the extension for native integration)
+- [ ] env-file cross-repo wiring (multree-style)
 - [ ] `resume` / reattach
 - [ ] optional hard-sandbox escape hatch
 
@@ -254,20 +263,22 @@ agentws/
 └── src/
     ├── main.rs            # entry → cli::run()
     ├── cli.rs             # clap command definitions + dispatch
-    ├── config.rs          # load config.toml, resolve paths
-    ├── discovery.rs       # find repos under roots, cache
-    ├── manifest.rs        # workspace.json read/write + lock
+    ├── config.rs          # load config.toml (roots, agent, symlinks, hooks)
+    ├── discovery.rs       # find repos under roots
+    ├── manifest.rs        # workspace.json read/write + lock + resolve/infer
     ├── worktree.rs        # git worktree add/remove, default-branch
+    ├── ops.rs             # shared: add/remove repo, symlinks, hooks, ids
     ├── picker.rs          # ratatui fuzzy multi-select
     ├── agent.rs           # AgentKind enum + launchers
-    ├── util.rs            # tilde expansion, helpers
+    ├── mcp.rs             # MCP stdio server (3 tools)
+    ├── util.rs            # tilde expansion
     └── commands/
-        ├── mod.rs
-        ├── new.rs
-        ├── list.rs
-        ├── status.rs
-        ├── open.rs
-        └── delete.rs
+        ├── new.rs  list.rs  status.rs  open.rs  delete.rs
+        ├── add.rs  remove.rs  launch.rs
+        ├── expand.rs       # request / approve / deny / pending
+        ├── lifecycle.rs    # archive / restore
+        ├── mcp_config.rs  completions.rs  init_shell.rs
+        └── mod.rs
 ```
 
 ## 11. Dependencies (P0)

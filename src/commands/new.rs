@@ -76,6 +76,8 @@ pub fn run(
         };
         worktree::add_worktree(&repo.path, &dest, &branch, &base_branch)
             .with_context(|| format!("creating worktree for {}", repo.name))?;
+        crate::ops::apply_symlinks(&repo.path, &dest);
+        crate::ops::run_post_create(&dest);
         println!(
             "  + {name:<20} {branch}  (base {base_branch})  -> {dest}",
             name = repo.name,
@@ -99,6 +101,7 @@ pub fn run(
         agent: None,
         repos: entries,
         requests: Vec::new(),
+        archived: false,
     };
     manifest::save(&ws)?;
 
@@ -119,6 +122,12 @@ pub fn run(
         },
     };
     println!("launching {agent} in {root} ...\n", agent = kind.as_str(), root = root.display());
+    // record which agent this workspace uses, then launch
+    {
+        let mut w = manifest::load(story)?;
+        w.agent = Some(manifest::AgentRef { kind: kind.as_str().to_string(), pid: None });
+        manifest::save(&w)?;
+    }
     agent::launch(kind, &root)?;
     Ok(())
 }

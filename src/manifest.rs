@@ -17,6 +17,9 @@ pub struct Workspace {
     pub repos: Vec<RepoEntry>,
     #[serde(default)]
     pub requests: Vec<RepoRequest>,
+    /// Set true after `archive` removes the worktrees.
+    #[serde(default)]
+    pub archived: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,6 +95,31 @@ pub fn load_path(path: &Path) -> Result<Workspace> {
     let text =
         fs::read_to_string(path).with_context(|| format!("reading manifest {}", path.display()))?;
     serde_json::from_str(&text).with_context(|| format!("parsing manifest {}", path.display()))
+}
+
+/// Infer the workspace story from the current working directory, if it is
+/// (or is inside) `~/.agentws/<story>`.
+pub fn infer_story_from_cwd() -> Result<Option<String>> {
+    let cwd = std::env::current_dir()?;
+    let base = config::workspaces_root()?;
+    if let Ok(rel) = cwd.strip_prefix(&base) {
+        if let Some(first) = rel.components().next() {
+            return Ok(Some(first.as_os_str().to_string_lossy().to_string()));
+        }
+    }
+    Ok(None)
+}
+
+/// Resolve a story name: use the given one, else infer from cwd.
+pub fn resolve_story(given: Option<String>) -> Result<String> {
+    match given {
+        Some(s) if !s.is_empty() => Ok(s),
+        _ => infer_story_from_cwd()?.ok_or_else(|| {
+            anyhow::anyhow!(
+                "no story name given, and not currently inside a workspace directory"
+            )
+        }),
+    }
 }
 
 pub fn list_stories() -> Result<Vec<String>> {

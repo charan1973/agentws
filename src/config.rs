@@ -49,6 +49,16 @@ pub struct Config {
     /// Default agent to launch: claude | codex | opencode | pi.
     #[serde(default)]
     pub default_agent: Option<String>,
+
+    /// Paths to symlink from the original repo into each worktree
+    /// (e.g. ["node_modules", ".env*"]). Defaults to none.
+    #[serde(default)]
+    pub symlinks: Vec<String>,
+
+    /// Shell command run inside each worktree right after it is created
+    /// (e.g. "npm ci"). Defaults to none.
+    #[serde(default)]
+    pub post_create: Option<String>,
 }
 
 impl Config {
@@ -84,7 +94,13 @@ repo_roots = ["~/work"]
 # default_base = "main"
 
 # Default agent to launch (claude | codex | opencode | pi).
-default_agent = "claude"
+default_agent = "pi"
+
+# Paths to symlink from each original repo into its worktree.
+# symlinks = ["node_modules", ".env*"]
+
+# Shell command run inside each worktree right after creation.
+# post_create = "npm ci"
 "#;
         fs::write(&path, example)?;
     }

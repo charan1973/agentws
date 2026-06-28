@@ -22,6 +22,7 @@ crossterm = "0.28"
 fuzzy-matcher = "0.3"
 fs2 = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
+clap_complete = "4"
 
 [profile.release]
 lto = true
