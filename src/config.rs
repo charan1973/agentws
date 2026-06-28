@@ -46,10 +46,6 @@ pub struct Config {
     #[serde(default)]
     pub default_base: Option<String>,
 
-    /// Default agent to launch: claude | codex | opencode | pi.
-    #[serde(default)]
-    pub default_agent: Option<String>,
-
     /// Paths to symlink from the original repo into each worktree
     /// (e.g. ["node_modules", ".env*"]). Defaults to none.
     #[serde(default)]
@@ -92,9 +88,6 @@ repo_roots = ["~/work"]
 
 # Default base branch to create story branches from (default: each repo's default branch).
 # default_base = "main"
-
-# Default agent to launch (claude | codex | opencode | pi).
-default_agent = "pi"
 
 # Paths to symlink from each original repo into its worktree.
 # symlinks = ["node_modules", ".env*"]

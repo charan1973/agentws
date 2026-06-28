@@ -48,52 +48,62 @@ We re-implement the (already-solved) worktree plumbing ourselves, which is
 deliberate: it's thin, and keeping it in-tree means the expansion protocol can
 touch every layer cleanly.
 
-### 3.2 Soft scope, not a hard sandbox
+### 3.2 Soft scope, not a hard sandbox  *(see HANDOFF.md §4 re: activate bug)*
 
 The agent is **not** locked in. We get scoping three ways:
 1. **Physical**: each story's repos live as worktrees *under one per-story
-   directory*. The agent is launched from that directory, so it sees only those
-   repos by default — no grep pollution, for free.
+   directory*. The agent runs from that directory, so it sees only those repos by
+   default — no grep pollution, for free.
 2. **Request/approve**: when the agent needs another repo, it asks; a human
    approves; the repo appears in-scope.
-3. **Native prompts**: for any stray out-of-scope read, the agent's own
-   permission system prompts you (Claude Code / Codex already do this).
+3. **Native prompts**: for any stray out-of-scope read, the agent's own permission
+   system prompts you.
 
-We deliberately skip FUSE / mount-namespaces / microVMs (you're on macOS, which
-has no mount namespaces anyway, and you explicitly don't want a hard restriction).
+We skip FUSE / mount-namespaces / microVMs (macOS has no mount namespaces, and
+we explicitly don't want a hard restriction).
 
-### 3.3 Hybrid expansion: MCP tool + CLI share one manifest
+### 3.3 Conda-style activation (PIVOTED — supersedes the old launcher model)
+
+**agentws does NOT spawn agents.** It owns the workspace (worktrees + dir); you
+`activate` it (a sourced shell function: `cd` in + `export AGENTWS_WORKSPACE`)
+then run `pi`/`claude`/`codex` yourself, natively. The agent resumes itself
+(`pi -c`, `/resume`) keyed by the workspace dir — **resume is no longer our
+problem**.
+
+- `AGENTWS_WORKSPACE` is **per-shell** (set by the sourced function), exactly
+  like `conda activate`.
+- `activate <story> <cmd>` = one-shot passthrough (run cmd in workspace, return).
+- Old launcher (`agent.rs`, `launch` command, `agent` manifest field, `default_agent`)
+  was **removed**.
+
+> 🔴 **STATUS:** the `init-shell` shell function has a runtime bug — see
+> `HANDOFF.md` §4. Build compiles; activate/deactivate not yet functional.
+
+### 3.4 Hybrid expansion: MCP tool + CLI share one manifest *(deferred wiring)*
 
 Two ways to add a repo mid-session, both writing the same `workspace.json`:
-- **Agent-initiated** (MCP tool): agent calls `request_repo(name)`; a supervisor
-  prompts you; on approval the worktree is created.
+- **Agent-initiated** (MCP tool): agent calls `request_repo(name)`; supervisor/
+  notification prompts you; on approval the worktree is created.
 - **Human-initiated** (CLI): you run `agentws add <repo>` directly.
 
-### 3.4 Branch naming: `feat/<story>` off each repo's default branch
+> The MCP server is implemented & E2E-tested but **not yet wired into agents**
+> (user said "leave the mcp for now").
 
-Every repo in a story gets a branch named `feat/<story-name>` (e.g.
-`feat/auth-payments`), created from that repo's default branch (usually `main`).
-Override per story with `--base <branch>` if a story should branch off something
-else (e.g. `develop`, or a release branch).
+### 3.5 Branch naming: `feat/<story>` off each repo's default branch
 
-### 3.5 Workspace location: `~/.agentws/<story>/`
+Every repo in a story gets `feat/<story-name>`, off that repo's default branch.
+Override per story with `--base <branch>`.
 
-Workspaces live under `~/.agentws/`, **not** inside `work/`. This keeps your real
-repo directory clean — no stray worktree folders next to your checkouts. The
-agent runs from `~/.agentws/<story>/` and only ever sees that story's repos. Your
-`work/` repos are the *source* the worktrees branch from; they're never touched.
+### 3.6 Workspace location: `~/.agentws/<story>/`
 
-### 3.6 Picker: `ratatui` fuzzy multi-select
+Workspaces live under `~/.agentws/`, **not** inside `work/`. Keeps your real repo
+dir clean. The agent runs from `~/.agentws/<story>/` and sees only that story's
+repos.
 
-The repo picker is a full-screen terminal UI built with `ratatui` (the standard
-Rust TUI library) + `crossterm`, with fuzzy filtering (`fuzzy-matcher`). Type to
-filter, Space to toggle, Enter to confirm.
+### 3.7 Picker: `ratatui` fuzzy multi-select
 
-### 3.7 `new` launches the agent automatically
-
-`agentws new <story>` creates the workspace **and** starts the agent in one step,
-so you're prompting immediately. `--no-launch` skips the launch if you just want
-to create. `--agent <kind>` selects the agent (default: `claude`).
+Full-screen terminal UI built with `ratatui` + `crossterm`, fuzzy filtering via
+`fuzzy-matcher`. Type to filter, Space to toggle, Enter to confirm.
 
 ## 4. The key insight — layout *is* the scoping
 

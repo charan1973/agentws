@@ -12,21 +12,12 @@ pub struct Workspace {
     pub root: PathBuf,
     pub created: DateTime<Utc>,
     #[serde(default)]
-    pub agent: Option<AgentRef>,
-    #[serde(default)]
     pub repos: Vec<RepoEntry>,
     #[serde(default)]
     pub requests: Vec<RepoRequest>,
     /// Set true after `archive` removes the worktrees.
     #[serde(default)]
     pub archived: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentRef {
-    pub kind: String,
-    #[serde(default)]
-    pub pid: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -121,22 +112,28 @@ pub fn resolve_story(given: Option<String>) -> Result<String> {
     if let Some(s) = given.filter(|s| !s.is_empty()) {
         return Ok(s);
     }
-    // 2. cwd inside a workspace
+    // 2. activated shell ($AGENTWS_WORKSPACE env var) — per-shell, authoritative
+    if let Ok(s) = std::env::var("AGENTWS_WORKSPACE") {
+        if !s.is_empty() && exists(&s) {
+            return Ok(s);
+        }
+    }
+    // 3. cwd inside a workspace
     if let Some(s) = infer_story_from_cwd()? {
         return Ok(s);
     }
-    // 3. active pointer
+    // 4. active pointer (global fallback)
     if let Some(s) = get_current()? {
         if exists(&s) {
             return Ok(s);
         }
     }
-    // 4. exactly one workspace
+    // 5. exactly one workspace
     let stories = list_stories().unwrap_or_default();
     if stories.len() == 1 {
         return Ok(stories[0].clone());
     }
-    // 5. error
+    // 6. error
     let hint = if stories.is_empty() {
         "No workspaces exist yet. Create one with `agentws new <story>`.".to_string()
     } else {

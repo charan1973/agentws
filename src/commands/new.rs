@@ -1,15 +1,9 @@
-use crate::{agent, config, discovery, manifest, picker, worktree};
+use crate::{config, discovery, manifest, picker, worktree};
 use anyhow::{bail, Context, Result};
 use chrono::Utc;
 use std::path::Path;
 
-pub fn run(
-    story: &str,
-    repos: Option<Vec<String>>,
-    agent: Option<String>,
-    base: Option<String>,
-    no_launch: bool,
-) -> Result<()> {
+pub fn run(story: &str, repos: Option<Vec<String>>, base: Option<String>) -> Result<()> {
     let cfg = config::load()?;
     if cfg.repo_roots_expanded().is_empty() {
         let path = config::ensure_example()?;
@@ -35,9 +29,7 @@ pub fn run(
     let roots = cfg.repo_roots_expanded();
     let all = discovery::discover(&roots);
     if all.is_empty() {
-        bail!(
-            "no git repositories found under {roots:?}. Check repo_roots in config."
-        );
+        bail!("no git repositories found under {roots:?}. Check repo_roots in config.");
     }
 
     let selected: Vec<discovery::Repo> = match repos {
@@ -98,7 +90,6 @@ pub fn run(
         story: story.to_string(),
         root: root.clone(),
         created: Utc::now(),
-        agent: None,
         repos: entries,
         requests: Vec::new(),
         archived: false,
@@ -106,30 +97,12 @@ pub fn run(
     manifest::save(&ws)?;
     manifest::set_current(story)?;
 
-    println!("\nworkspace '{story}' ready at {}", root.display());
-
-    if no_launch {
-        println!(
-            "to enter it: cd \"$(agentws open {story})\""
-        );
-        return Ok(());
-    }
-
-    let kind = match agent {
-        Some(a) => agent::AgentKind::parse(&a)?,
-        None => match &cfg.default_agent {
-            Some(a) => agent::AgentKind::parse(a)?,
-            None => agent::AgentKind::Claude,
-        },
-    };
-    println!("launching {agent} in {root} ...\n", agent = kind.as_str(), root = root.display());
-    // record which agent this workspace uses, then launch
-    {
-        let mut w = manifest::load(story)?;
-        w.agent = Some(manifest::AgentRef { kind: kind.as_str().to_string(), pid: None });
-        manifest::save(&w)?;
-    }
-    agent::launch(kind, &root)?;
+    println!("\nworkspace '{story}' ready at {}\n", root.display());
+    println!("activate it, then run any agent (pi / claude / codex / opencode):");
+    println!("  agentws activate {story}          # cd in + set $AGENTWS_WORKSPACE");
+    println!("  agentws activate {story} pi        # run pi in the workspace (one-shot)");
+    println!();
+    println!("the agent runs natively and resumes itself (e.g. `pi -c`) — keyed by this dir.");
     Ok(())
 }
 
@@ -147,9 +120,7 @@ fn select_by_name(
             .iter()
             .find(|r| r.name == n)
             .cloned()
-            .with_context(|| {
-                format!("repo '{n}' not found among discovered repos")
-            })?;
+            .with_context(|| format!("repo '{n}' not found among discovered repos"))?;
         out.push(found);
     }
     Ok(out)

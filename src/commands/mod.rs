@@ -3,7 +3,6 @@ pub mod completions;
 pub mod delete;
 pub mod expand;
 pub mod init_shell;
-pub mod launch;
 pub mod lifecycle;
 pub mod list;
 pub mod mcp_config;
