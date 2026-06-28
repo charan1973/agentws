@@ -28,6 +28,7 @@ pub fn run(story: Option<String>, agent_override: Option<String>) -> Result<()> 
         pid: None,
     });
     manifest::save(&ws)?;
+    manifest::set_current(&story)?;
 
     println!("launching {} in {} ...\n", kind.as_str(), ws.root.display());
     agent::launch(kind, &ws.root)?;

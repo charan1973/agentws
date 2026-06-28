@@ -238,6 +238,8 @@ agentws discover                              # refresh repo cache
 - [x] `launch` to (re)start an agent in an existing workspace
 - [x] `symlinks` config (glob) + `post_create` hook, applied on create/add/restore
 - [x] Shell completions (`completions`) + `init-shell` cd helper
+- [x] **Active-workspace pointer** (`~/.agentws/.current`): commands run from *any* directory resolve the target via `--story` flag → cwd → active pointer → single-workspace → helpful error. Set on `new`/`use`/`launch`; cleared on `delete`; shown as `*` in `list`
+- [x] SIGPIPE handled (no broken-pipe panic when piping to `head`)
 
 ### P2 — Permission-gated expansion (the differentiator) *(done)*
 - [x] `agentws mcp` server: `list_available_repos`, `request_repo`, `check_request` (hand-rolled stdio JSON-RPC 2.0)

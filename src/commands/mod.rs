@@ -10,4 +10,5 @@ pub mod mcp_config;
 pub mod new;
 pub mod open;
 pub mod remove;
+pub mod use_ws;
 pub mod status;

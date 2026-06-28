@@ -35,6 +35,7 @@ pub fn run(story: &str, yes: bool) -> Result<()> {
     if ws.root.exists() {
         std::fs::remove_dir_all(&ws.root).ok();
     }
+    manifest::clear_current_if(story)?;
     println!("deleted workspace '{story}'.");
     Ok(())
 }

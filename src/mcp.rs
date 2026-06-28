@@ -127,10 +127,7 @@ fn call_tool(msg: &Value) -> Result<Value> {
 }
 
 fn current_workspace() -> Result<manifest::Workspace> {
-    let story = manifest::infer_story_from_cwd()?
-        .ok_or_else(|| anyhow::anyhow!(
-            "not running inside an agentws workspace. Run `agentws` from a workspace directory (~/.agentws/<story>)."
-        ))?;
+    let story = manifest::resolve_story(None)?;
     manifest::load(&story)
 }
 

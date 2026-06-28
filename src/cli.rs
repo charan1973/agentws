@@ -35,6 +35,11 @@ pub enum Command {
     /// List all workspaces.
     List,
 
+    /// Set the active workspace (default target for commands run outside a workspace dir).
+    Use {
+        story: String,
+    },
+
     /// Show status of a workspace (or the current one if run from within it).
     Status {
         #[arg(default_value = "")]
@@ -133,6 +138,7 @@ pub fn run() -> Result<()> {
             commands::new::run(&story, repos, agent, base, no_launch)
         }
         Command::List => commands::list::run(),
+        Command::Use { story } => commands::use_ws::run(&story),
         Command::Status { story } => {
             let s = (!story.is_empty()).then_some(story);
             commands::status::run(s)

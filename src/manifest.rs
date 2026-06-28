@@ -110,16 +110,88 @@ pub fn infer_story_from_cwd() -> Result<Option<String>> {
     Ok(None)
 }
 
-/// Resolve a story name: use the given one, else infer from cwd.
+/// Resolve which workspace a command targets, in priority order:
+///   1. an explicit `--story` argument,
+///   2. the cwd is inside a workspace dir (`~/.agentws/<story>`),
+///   3. the active-workspace pointer (`~/.agentws/.current`),
+///   4. there is exactly one workspace — use it,
+///   5. otherwise: error with a helpful hint.
 pub fn resolve_story(given: Option<String>) -> Result<String> {
-    match given {
-        Some(s) if !s.is_empty() => Ok(s),
-        _ => infer_story_from_cwd()?.ok_or_else(|| {
-            anyhow::anyhow!(
-                "no story name given, and not currently inside a workspace directory"
-            )
-        }),
+    // 1. explicit
+    if let Some(s) = given.filter(|s| !s.is_empty()) {
+        return Ok(s);
     }
+    // 2. cwd inside a workspace
+    if let Some(s) = infer_story_from_cwd()? {
+        return Ok(s);
+    }
+    // 3. active pointer
+    if let Some(s) = get_current()? {
+        if exists(&s) {
+            return Ok(s);
+        }
+    }
+    // 4. exactly one workspace
+    let stories = list_stories().unwrap_or_default();
+    if stories.len() == 1 {
+        return Ok(stories[0].clone());
+    }
+    // 5. error
+    let hint = if stories.is_empty() {
+        "No workspaces exist yet. Create one with `agentws new <story>`.".to_string()
+    } else {
+        format!(
+            "Specify one with `agentws <cmd> --story <name>`, or set an active one with
+  `agentws use <name>`.
+Available workspaces: {}",
+            stories.join(", ")
+        )
+    };
+    anyhow::bail!("could not determine which workspace to use.\n{hint}")
+}
+
+/// Path to the active-workspace pointer file: `~/.agentws/.current`.
+fn current_pointer_path() -> Result<PathBuf> {
+    Ok(config::workspaces_root()?.join(".current"))
+}
+
+/// Set the active workspace (used as a fallback by `resolve_story`).
+pub fn set_current(story: &str) -> Result<()> {
+    let path = current_pointer_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, story)?;
+    Ok(())
+}
+
+/// Read the active workspace, if any. Stale pointers (pointing at a deleted
+/// workspace) are treated as absent.
+pub fn get_current() -> Result<Option<String>> {
+    let path = current_pointer_path()?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let s = fs::read_to_string(&path)?.trim().to_string();
+    if s.is_empty() || !exists(&s) {
+        Ok(None)
+    } else {
+        Ok(Some(s))
+    }
+}
+
+/// Clear the active-workspace pointer if (and only if) it points at `story`.
+/// Reads the raw file content so deletion still works once the manifest is gone.
+pub fn clear_current_if(story: &str) -> Result<()> {
+    let path = current_pointer_path()?;
+    if !path.exists() {
+        return Ok(());
+    }
+    let s = fs::read_to_string(&path)?.trim().to_string();
+    if s == story {
+        fs::remove_file(path).ok();
+    }
+    Ok(())
 }
 
 pub fn list_stories() -> Result<Vec<String>> {

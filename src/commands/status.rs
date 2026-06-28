@@ -1,15 +1,9 @@
 use crate::manifest;
 use crate::worktree;
-use anyhow::{bail, Result};
+use anyhow::Result;
 
 pub fn run(story: Option<String>) -> Result<()> {
-    let story = match story {
-        Some(s) => s,
-        None => match manifest::infer_story_from_cwd()? {
-            Some(s) => s,
-            None => bail!("pass a story name: `agentws status <story>`"),
-        },
-    };
+    let story = manifest::resolve_story(story)?;
 
     let ws = manifest::load(&story)?;
     println!("workspace : {}", ws.story);

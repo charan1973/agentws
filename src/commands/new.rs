@@ -104,6 +104,7 @@ pub fn run(
         archived: false,
     };
     manifest::save(&ws)?;
+    manifest::set_current(story)?;
 
     println!("\nworkspace '{story}' ready at {}", root.display());
 
