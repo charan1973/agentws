@@ -66,6 +66,7 @@ pub fn save(ws: &Workspace) -> Result<()> {
         .create(true)
         .read(true)
         .write(true)
+        .truncate(true)
         .open(&lock_path)
         .context("opening manifest lock")?;
     lock.lock_exclusive().context("locking manifest")?;
@@ -103,10 +104,11 @@ pub fn infer_story_from_cwd() -> Result<Option<String>> {
 
 /// Resolve which workspace a command targets, in priority order:
 ///   1. an explicit `--story` argument,
-///   2. the cwd is inside a workspace dir (`~/.agentws/<story>`),
-///   3. the active-workspace pointer (`~/.agentws/.current`),
-///   4. there is exactly one workspace — use it,
-///   5. otherwise: error with a helpful hint.
+///   2. the per-shell `$AGENTWS_WORKSPACE` env var (set by `activate`),
+///   3. the cwd is inside a workspace dir (`~/.agentws/<story>`),
+///   4. the active-workspace pointer (`~/.agentws/.current`),
+///   5. there is exactly one workspace — use it,
+///   6. otherwise: error with a helpful hint.
 pub fn resolve_story(given: Option<String>) -> Result<String> {
     // 1. explicit
     if let Some(s) = given.filter(|s| !s.is_empty()) {
@@ -206,4 +208,77 @@ pub fn list_stories() -> Result<Vec<String>> {
     }
     out.sort();
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    fn sample(story: &str, root: std::path::PathBuf) -> Workspace {
+        Workspace {
+            story: story.into(),
+            root: root.clone(),
+            created: Utc::now(),
+            repos: vec![RepoEntry {
+                name: "api".into(),
+                origin: root.join("origin/api"),
+                worktree: root.join("api"),
+                branch: format!("feat/{story}"),
+                base: "main".into(),
+            }],
+            requests: vec![RepoRequest {
+                id: "ab12".into(),
+                repo: "payments".into(),
+                reason: Some("need the client".into()),
+                status: "pending".into(),
+                by: "agent".into(),
+                created: Utc::now(),
+                resolved: None,
+            }],
+            archived: false,
+        }
+    }
+
+    #[test]
+    fn save_and_load_roundtrip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+        let ws = sample("demo", root.clone());
+
+        save(&ws).unwrap();
+        let loaded = load_path(&root.join("workspace.json")).unwrap();
+
+        assert_eq!(loaded.story, "demo");
+        assert_eq!(loaded.repos.len(), 1);
+        assert_eq!(loaded.repos[0].name, "api");
+        assert_eq!(loaded.repos[0].branch, "feat/demo");
+        assert_eq!(loaded.requests.len(), 1);
+        assert_eq!(loaded.requests[0].status, "pending");
+        assert!(!loaded.archived);
+    }
+
+    #[test]
+    fn legacy_manifest_with_agent_field_still_loads() {
+        // manifests written before the activation pivot had an `agent` field;
+        // since there's no deny_unknown_fields, serde must ignore it.
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("workspace.json");
+        std::fs::write(
+            &path,
+            r#"{
+  "story": "legacy",
+  "root": "/tmp/legacy",
+  "created": "2026-01-01T00:00:00Z",
+  "agent": { "kind": "claude", "pid": 123 },
+  "repos": [],
+  "requests": [],
+  "archived": false
+}"#,
+        )
+        .unwrap();
+        let ws = load_path(&path).unwrap();
+        assert_eq!(ws.story, "legacy");
+        assert!(ws.repos.is_empty());
+    }
 }

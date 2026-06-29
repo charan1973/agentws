@@ -138,3 +138,26 @@ fn glob_in(dir: &Path, pat: &str) -> Result<Vec<std::path::PathBuf>> {
     }
     Ok(out)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_id_is_four_hex_chars() {
+        let id = new_id();
+        assert_eq!(id.len(), 4, "id was {id}");
+        assert!(id.chars().all(|c| c.is_ascii_hexdigit()), "id was {id}");
+    }
+
+    #[test]
+    fn new_ids_differ_across_calls() {
+        // 4-hex space (65536); two consecutive calls colliding is ~1/65536 — fine for CI
+        let mut ids = Vec::new();
+        for _ in 0..8 {
+            ids.push(new_id());
+        }
+        let unique: std::collections::HashSet<_> = ids.iter().collect();
+        assert!(unique.len() > 1, "ids should vary across calls");
+    }
+}

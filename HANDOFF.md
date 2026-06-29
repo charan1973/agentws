@@ -1,7 +1,7 @@
 # agentws — Handoff / Status
 
 **Date:** 2026-06-29 (updated)
-**State:** Conda-style activation pivot **complete and verified** (bash + zsh). Build clean. Installed at `~/.cargo/bin/agentws`.
+**State:** Conda-style activation **complete & verified** (bash + zsh); `config`/`discover` commands added; **21 tests green**. Build clean. Installed at `~/.cargo/bin/agentws`.
 
 > Read this first, then `PLAN.md`. This file is the source of truth for where
 > things stand right now.
@@ -18,7 +18,8 @@
   cwd+env set, `status` resolves via env, passthrough, deactivate restores,
   per-shell isolation). See §4 for the earlier "blocker" — it was a **test
   artifact, not a code bug**.
-- 6 commits on `main`; latest folds in the zsh `compdef` guard + verification.
+- 7 commits on `main`; latest adds `config`/`discover`, a `lib.rs` test surface, and a 21-test suite.
+- The explicitly-deferred P3 items (MCP wiring into agents, pi extension, tmux inline approval, SQLite manifest, fish verification, hard sandbox) remain deferred — see PLAN.md §9.
 
 ---
 
@@ -87,9 +88,10 @@ exactly like `conda activate`. Two terminals = two independent values.
   (`agentws mcp`: `list_available_repos`/`request_repo`/`check_request`) is
   **implemented and E2E-tested** over real JSON-RPC. (User deferred wiring it into
   agents, so it's dormant but functional.)
-- **Run from any dir:** the full `--story`/env/cwd/`.current`/single-workspace chain.
+- **Run from any dir:** the full `--story`/env/cwd/`.current`/single-workspace chain (6 steps), **unit + integration tested**. SIGPIPE handled.
+- **Introspection:** `agentws config` (resolved config + paths), `agentws discover` (list repos under roots).
   SIGPIPE handled.
-- **Conda-style activation (the pivot):** ✅ bash + zsh verified end-to-end:
+- **Test suite (NEW):** `cargo test` = 21 green. 20 unit tests (util/config/ops/discovery/worktree/manifest) + 1 integration test (`resolve_story` priority chain, own process). Crate split into `lib.rs` + `main.rs` to enable this.
   - `eval "$(agentws init-shell zsh)"` defines the function.
   - `agentws activate <story>` → `cd` in + `export AGENTWS_WORKSPACE`.
   - `agentws activate <story> <cmd>` → one-shot passthrough (runs, returns).

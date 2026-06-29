@@ -1,6 +1,8 @@
 pub mod add;
 pub mod completions;
+pub mod config;
 pub mod delete;
+pub mod discover;
 pub mod expand;
 pub mod init_shell;
 pub mod lifecycle;

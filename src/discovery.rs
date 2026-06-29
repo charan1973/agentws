@@ -85,3 +85,79 @@ fn walk(dir: &Path, depth: usize, out: &mut Vec<Repo>, seen: &mut HashSet<PathBu
         walk(&entry.path(), depth + 1, out, seen);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+    use std::process::Command;
+
+    fn git(args: &[&str], dir: &Path) {
+        let out = Command::new("git").args(args).current_dir(dir).output().unwrap();
+        if !out.status.success() {
+            panic!(
+                "git {:?} in {} failed: {}",
+                args,
+                dir.display(),
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+    }
+
+    fn init_repo(path: &Path) {
+        std::fs::create_dir_all(path).unwrap();
+        git(&["init", "-q"], path);
+        git(&["symbolic-ref", "HEAD", "refs/heads/main"], path);
+        git(&["config", "user.email", "t@t.t"], path);
+        git(&["config", "user.name", "t"], path);
+        std::fs::write(path.join("f"), "x").unwrap();
+        git(&["add", "-A"], path);
+        git(&["commit", "-qm", "i"], path);
+    }
+
+    #[test]
+    fn discovers_immediate_git_repos() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("work");
+        std::fs::create_dir_all(&root).unwrap();
+        init_repo(&root.join("api"));
+        init_repo(&root.join("web"));
+        // a plain directory, not a repo -> ignored
+        std::fs::create_dir_all(root.join("notes")).unwrap();
+
+        let roots = [root];
+        let repos = discover(&roots);
+        let names: Vec<_> = repos.iter().map(|r| r.name.clone()).collect();
+        assert_eq!(names, vec!["api".to_string(), "web".to_string()]);
+    }
+
+    #[test]
+    fn discovers_nested_repos() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("work");
+        std::fs::create_dir_all(&root).unwrap();
+        init_repo(&root.join("group").join("svc"));
+
+        let repos = discover(&[root]);
+        let names: Vec<_> = repos.iter().map(|r| r.name.clone()).collect();
+        assert_eq!(names, vec!["svc".to_string()]);
+    }
+
+    #[test]
+    fn ignores_nonexistent_root() {
+        let repos = discover(&[PathBuf::from("/agentws/definitely/does/not/exist")]);
+        assert!(repos.is_empty());
+    }
+
+    #[test]
+    fn dedupes_overlapping_roots() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("work");
+        std::fs::create_dir_all(&root).unwrap();
+        init_repo(&root.join("api"));
+        let canon = root.canonicalize().unwrap();
+        // same dir via two paths -> counted once
+        let repos = discover(&[root, canon]);
+        assert_eq!(repos.len(), 1);
+    }
+}

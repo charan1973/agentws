@@ -107,6 +107,10 @@ pub enum Command {
     McpConfig { agent: String },
     /// Print shell completions for the agentws binary (bash | zsh | fish | elvish | powershell).
     Completions { shell: String },
+    /// Show resolved configuration and key paths.
+    Config,
+    /// Scan configured roots and list discovered repositories.
+    Discover,
     /// Print the shell `activate`/`deactivate` integration — `eval "$(agentws init-shell <shell>)"`.
     InitShell { shell: Option<String> },
 
@@ -144,6 +148,8 @@ pub fn run() -> Result<()> {
         Command::Mcp => crate::mcp::run(),
         Command::McpConfig { agent } => commands::mcp_config::run(&agent),
         Command::Completions { shell } => commands::completions::run(&shell),
+        Command::Config => commands::config::run(),
+        Command::Discover => commands::discover::run(),
         Command::InitShell { shell } => commands::init_shell::run(shell),
         Command::ListStories => {
             for s in manifest::list_stories().unwrap_or_default() {

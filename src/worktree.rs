@@ -137,3 +137,80 @@ pub fn list_worktrees(origin: &Path) -> Result<Vec<PathBuf>> {
     }
     Ok(paths)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+    use std::process::Command;
+
+    fn git(args: &[&str], dir: &Path) {
+        let out = Command::new("git").args(args).current_dir(dir).output().unwrap();
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    fn make_repo(path: &Path) {
+        std::fs::create_dir_all(path).unwrap();
+        git(&["init", "-q"], path);
+        git(&["symbolic-ref", "HEAD", "refs/heads/main"], path);
+        git(&["config", "user.email", "t@t.t"], path);
+        git(&["config", "user.name", "t"], path);
+        std::fs::write(path.join("f.txt"), "hi").unwrap();
+        git(&["add", "-A"], path);
+        git(&["commit", "-qm", "init"], path);
+    }
+
+    #[test]
+    fn default_branch_detects_main() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("origin");
+        make_repo(&repo);
+        assert_eq!(default_branch(&repo).unwrap(), "main");
+    }
+
+    #[test]
+    fn add_list_dirty_remove_worktree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let origin = tmp.path().join("origin");
+        let dest = tmp.path().join("wt");
+        make_repo(&origin);
+
+        add_worktree(&origin, &dest, "feat/story", "main").unwrap();
+        assert!(dest.is_dir(), "worktree dir should exist");
+        assert!(dest.join("f.txt").exists(), "committed file should be present");
+        // git reports worktree paths canonicalized (macOS: /tmp -> /private/tmp),
+        // so compare canonical forms rather than raw paths.
+        let canon_dest = dest.canonicalize().unwrap();
+        let listed = list_worktrees(&origin).unwrap();
+        assert!(
+            listed.iter().any(|p| p.canonicalize().unwrap_or_else(|_| p.clone()) == canon_dest),
+            "dest ({}) should be among worktrees: {:?}",
+            dest.display(),
+            listed
+        );
+
+        // clean worktree is not dirty
+        assert!(!is_dirty(&dest), "fresh worktree should not be dirty");
+        // an untracked change makes it dirty
+        std::fs::write(dest.join("untracked.txt"), "x").unwrap();
+        assert!(is_dirty(&dest), "worktree with untracked file should be dirty");
+
+        remove_worktree(&origin, &dest).unwrap();
+        assert!(!dest.exists(), "dest should be gone after remove");
+    }
+
+    #[test]
+    fn add_worktree_rejects_bad_base() {
+        let tmp = tempfile::tempdir().unwrap();
+        let origin = tmp.path().join("origin");
+        let dest = tmp.path().join("wt");
+        make_repo(&origin);
+        let res = add_worktree(&origin, &dest, "feat/x", "does-not-exist");
+        assert!(res.is_err(), "should fail when base branch is absent");
+    }
+}

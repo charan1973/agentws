@@ -121,6 +121,8 @@ agentws mcp                                            # run the MCP server (std
 agentws mcp-config claude                              # print MCP wiring snippet
 agentws completions zsh                                # generate shell completions
 agentws init-shell zsh                                 # print activate/deactivate function
+agentws config                                         # show resolved config + key paths
+agentws discover                                       # list discovered repos
 ```
 
 ---
@@ -174,6 +176,23 @@ For `pi`, there is no built-in MCP; use the CLI commands directly or build a pi 
 - **Resume is free.** Because agents key sessions by project directory, `pi -c` or `/resume` inside an activated workspace resumes that workspace's conversation automatically.
 - **Piping is safe.** `agentws list | head` exits quietly instead of panicking on a broken pipe.
 - **Switching stories.** `agentws use <story>` sets the global pointer for commands run outside an activated shell. Inside an activated shell, the env var wins.
+
+---
+
+## Development
+
+```bash
+cargo build                      # build
+cargo test                       # run unit + integration tests (21 tests)
+cargo clippy --all-targets       # lint
+cargo install --path . --locked  # install to ~/.cargo/bin/agentws
+```
+
+The crate exposes both a binary (`src/main.rs`) and a library (`src/lib.rs`), so
+the modules are testable: in-module unit tests (`#[cfg(test)]`) cover the pure
+functions and the git/worktree/discovery/manifest logic, and an integration test
+under `tests/` (`resolve_priority.rs`) runs in its **own process** so it can
+mutate `HOME` / `$AGENTWS_WORKSPACE` / cwd without racing other tests.
 
 ---
 

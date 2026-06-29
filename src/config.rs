@@ -70,9 +70,12 @@ pub fn load() -> Result<Config> {
     }
     let text = fs::read_to_string(&path)
         .with_context(|| format!("reading config at {}", path.display()))?;
-    let cfg: Config = toml::from_str(&text)
-        .with_context(|| format!("parsing config at {}", path.display()))?;
-    Ok(cfg)
+    parse(&text).with_context(|| format!("parsing config at {}", path.display()))
+}
+
+/// Parse a config from a TOML string. Split out from `load` for testability.
+pub fn parse(text: &str) -> Result<Config> {
+    Ok(toml::from_str(text)?)
 }
 
 /// Returns the config path, writing a documented example if it doesn't exist yet.
@@ -98,4 +101,52 @@ repo_roots = ["~/work"]
         fs::write(&path, example)?;
     }
     Ok(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_empty_is_default() {
+        let cfg = parse("").unwrap();
+        assert!(cfg.repo_roots.is_empty());
+        assert!(cfg.default_base.is_none());
+        assert!(cfg.symlinks.is_empty());
+        assert!(cfg.post_create.is_none());
+    }
+
+    #[test]
+    fn parse_roots_and_hooks() {
+        let cfg = parse(
+            r#"
+repo_roots = ["~/work", "/abs/repos"]
+symlinks = ["node_modules", ".env*"]
+post_create = "npm ci"
+default_base = "develop"
+"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.repo_roots.len(), 2);
+        // tilde stays literal here; expansion only happens in repo_roots_expanded()
+        assert_eq!(cfg.repo_roots[0], std::path::PathBuf::from("~/work"));
+        assert_eq!(cfg.symlinks, vec!["node_modules".to_string(), ".env*".to_string()]);
+        assert_eq!(cfg.post_create.as_deref(), Some("npm ci"));
+        assert_eq!(cfg.default_base.as_deref(), Some("develop"));
+    }
+
+    #[test]
+    fn parse_unknown_keys_ignored() {
+        // no deny_unknown_fields, so unknown fields are silently dropped
+        let cfg = parse("bogus_key = 1\n").unwrap();
+        assert!(cfg.repo_roots.is_empty());
+    }
+
+    #[test]
+    fn repo_roots_expanded_resolves_tilde() {
+        let Some(home) = home_dir() else { return; };
+        let cfg = parse("repo_roots = [\"~/work\"]\n").unwrap();
+        let expanded = cfg.repo_roots_expanded();
+        assert_eq!(expanded, vec![home.join("work")]);
+    }
 }
