@@ -76,8 +76,8 @@ problem**.
 - Old launcher (`agent.rs`, `launch` command, `agent` manifest field, `default_agent`)
   was **removed**.
 
-> 🔴 **STATUS:** the `init-shell` shell function has a runtime bug — see
-> `HANDOFF.md` §4. Build compiles; activate/deactivate not yet functional.
+> ✅ **STATUS:** verified working in bash + zsh via `eval "$(agentws init-shell zsh)"`.
+> Fish is implemented but untested on this machine. See `HANDOFF.md` §4.
 
 ### 3.4 Hybrid expansion: MCP tool + CLI share one manifest *(deferred wiring)*
 

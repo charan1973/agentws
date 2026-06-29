@@ -83,7 +83,9 @@ fn print_posix(shell: &str) -> Result<()> {
     _wanted stories expl 'story' compadd -- $stories
   fi
 }
-compdef _agentws agentws"##
+if (( $+functions[compdef] )); then
+  compdef _agentws agentws
+fi"##
     } else {
         r##"_agentws_complete() {
   local cur="${COMP_WORDS[COMP_CWORD]}"

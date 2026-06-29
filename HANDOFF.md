@@ -1,7 +1,7 @@
 # agentws — Handoff / Status
 
-**Date:** 2026-06-28
-**State:** Mid-pivot. Build compiles. **`activate`/`deactivate` has a runtime bug (not yet resolved).**
+**Date:** 2026-06-29 (updated)
+**State:** Conda-style activation pivot **complete and verified** (bash + zsh). Build clean. Installed at `~/.cargo/bin/agentws`.
 
 > Read this first, then `PLAN.md`. This file is the source of truth for where
 > things stand right now.
@@ -10,13 +10,15 @@
 
 ## TL;DR
 
-- The project **pivoted architecture** mid-build (see §2). The old "agentws launches
-  the agent" model was ripped out and replaced with a **conda/venv-style activation
-  model** (workspace owns the dir; you `activate` then run any agent natively).
+- The project **pivoted architecture**: the old "agentws launches the agent" model
+  was ripped out and replaced with a **conda/venv-style activation model** (workspace
+  owns the dir; you `activate` then run any agent natively).
 - **Build compiles clean.** Installed at `~/.cargo/bin/agentws`.
-- **The conda-style `activate`/`deactivate` is NOT working yet** — §4 documents the
-  bug. This is the blocker. Everything else works.
-- 4 commits on `main`; the pivot work is **uncommitted** in the working tree.
+- **`activate`/`deactivate` WORKS** — verified in bash + zsh (full flow: activate →
+  cwd+env set, `status` resolves via env, passthrough, deactivate restores,
+  per-shell isolation). See §4 for the earlier "blocker" — it was a **test
+  artifact, not a code bug**.
+- 6 commits on `main`; latest folds in the zsh `compdef` guard + verification.
 
 ---
 
@@ -31,14 +33,14 @@ and a human approves it.
 
 ---
 
-## 2. The architecture pivot (IMPORTANT — most recent work)
+## 2. The architecture pivot
 
 ### Old model (REMOVED)
 agentws *owned* the agent process: it spawned the agent (`agent::launch`), tracked
 an `agent.kind`/`pid` in the manifest, and tried to manage resume. This duplicated
 the agent, blocked its native features, and made resume a per-agent nightmare.
 
-### New model (conda/venv style — IN PROGRESS)
+### New model (conda/venv style — DONE)
 agentws owns only the **workspace** (worktrees + dir). You **activate** it — a
 sourced shell function that `cd`s you in and `export`s `AGENTWS_WORKSPACE` — then
 you run `pi`/`claude`/`codex` yourself. agentws **never spawns an agent** (pure
@@ -59,15 +61,15 @@ exactly like `conda activate`. Two terminals = two independent values.
   old manifests loadable)
 
 ### What got added
-- `init-shell` now emits a conda-style `agentws` shell function (`activate`/
-  `deactivate`/delegate), for bash/zsh/fish. **This has the bug — see §4.**
+- `init-shell` emits a conda-style `agentws` shell function (`activate`/
+  `deactivate`/delegate), for bash/zsh/fish. **Verified in bash + zsh.**
 - `AGENTWS_WORKSPACE` added to the top of `resolve_story`'s fallback chain.
-- New hidden `_list-stories` subcommand to feed shell completion of `activate`.
+- Hidden `_list-stories` subcommand to feed shell completion of `activate`.
 - `new` now just creates the workspace + prints the activate hint (no launch).
 
 ### Resolution chain for "which workspace?" (priority order)
 1. `--story <name>` flag (explicit)
-2. **`$AGENTWS_WORKSPACE`** (per-shell; set by `activate`)  ← NEW
+2. **`$AGENTWS_WORKSPACE`** (per-shell; set by `activate`)
 3. cwd is inside a workspace dir
 4. `~/.agentws/.current` (global fallback pointer)
 5. exactly one workspace exists → use it
@@ -83,62 +85,56 @@ exactly like `conda activate`. Two terminals = two independent values.
 - **Expansion (P1+P2):** `add`/`remove` (human), `request`/`approve`/`deny`/
   `pending` (permission-gated), `archive`/`restore`. The MCP stdio server
   (`agentws mcp`: `list_available_repos`/`request_repo`/`check_request`) is
-  **implemented and E2E-tested** over real JSON-RPC — agent requests → human
-  approves → worktree appears in-scope, no restart. (User deferred wiring it into
+  **implemented and E2E-tested** over real JSON-RPC. (User deferred wiring it into
   agents, so it's dormant but functional.)
-- **Run from any dir (P1):** the `--story`/cwd/`.current`/single-workspace chain
-  (steps 1,3,4,5) all verified. SIGPIPE handled (no broken-pipe panic).
-- **Quality of life:** `use`, completions, symlink config + `post_create` hook,
-  `mcp-config` snippets.
+- **Run from any dir:** the full `--story`/env/cwd/`.current`/single-workspace chain.
+  SIGPIPE handled.
+- **Conda-style activation (the pivot):** ✅ bash + zsh verified end-to-end:
+  - `eval "$(agentws init-shell zsh)"` defines the function.
+  - `agentws activate <story>` → `cd` in + `export AGENTWS_WORKSPACE`.
+  - `agentws activate <story> <cmd>` → one-shot passthrough (runs, returns).
+  - `agentws deactivate` → restores cwd, unsets env.
+  - commands like `agentws add`/`status` resolve the workspace via the env var
+    (no `--story` needed) while activated.
+  - per-shell isolation (two shells, two workspaces).
+  - `agentws activate nope` → clean error, rc=1.
 
-## 4. What's BROKEN — the current blocker 🔴
+## 4. The earlier "blocker" — RESOLVED (was a test artifact) ✅
 
-**The conda-style `activate`/`deactivate` shell function is not getting defined
-when you source `agentws init-shell bash`.**
+**Symptom seen last session:** `activate`/`deactivate` didn't work — `type agentws`
+still showed the binary, and calls errored `unrecognized subcommand 'activate'`.
 
-### Symptoms
-- `agentws init-shell bash` prints a function body that *looks* correct.
-- But `source <(agentws init-shell bash)` in bash does **not** define `agentws` as
-  a function — `type agentws` still shows the binary path, and calling
-  `agentws activate …` falls through to clap, which errors:
-  `error: unrecognized subcommand 'activate'`.
-- Same failure for the passthrough (`activate <story> <cmd>`), `deactivate`, and
-  the env-var resolution path that depends on `activate` having set
-  `AGENTWS_WORKSPACE`.
+**Root cause:** NOT a code bug. The test invoked
+`source <(agentws init-shell bash)` (**process substitution**). In bash, sourcing a
+function definition from a FIFO (proc-sub) does **not** reliably define the
+function — `type -t agentws` returned `file`, not `function`.
 
-### What I ruled out
-- **Not a stale-binary issue:** reproduced after `cargo install --path . --force`
-  against the fresh build. The binary is current.
-- **Not a compile issue:** `cargo build` is clean.
+**The fix was already the documented usage:** use the idiomatic `eval` form, which
+is what the README recommends and what conda/starship/pyenv use:
 
-### Most likely cause (unverified — THIS is where to pick up)
-The emitted bash function in `src/commands/init_shell.rs` (`print_posix`) is
-probably malformed in a way that makes `source` silently fail to define it. Prime
-suspects, in order:
-1. The raw-string emission / the leading `agentws() {` line — something about how
-   `println!` renders it makes bash reject or skip the function definition. Check
-   with: `agentws init-shell bash > /tmp/a.sh; bash -n /tmp/a.sh` (syntax check)
-   and `bash -x /tmp/a.sh` (trace). Also `source /tmp/a.sh; type agentws`.
-2. Process-substitution `<(...)` edge case — try the file-based form above to
-   remove that variable.
-3. The `\$AGENTWS_WORKSPACE` backslash-escaping inside the heredoc-style raw
-   string may be producing a literal `\$` that breaks the `case`/`export`. Inspect
-   the *exact* bytes emitted (the earlier `cat -A` attempt failed because macOS
-   `cat` has no `-A`; use `cat -v` or `od -c | head`).
+| Form | Result |
+|------|--------|
+| `eval "$(agentws init-shell bash)"` (README form) | ✅ function defined, full flow works |
+| `source <(agentws init-shell bash)` (proc-sub) | ❌ bash FIFO quirk — function not defined |
+| `source /tmp/file` | ✅ works |
 
-### Concrete next steps when resuming
-1. **Capture exact emitted bytes:** `agentws init-shell bash > /tmp/aw.sh &&
-   cat -v /tmp/aw.sh | head -40`. Look for mangled escaping.
-2. **Syntax-check:** `bash -n /tmp/aw.sh` — report any parse error.
-3. **Source + inspect:** `bash -c 'source /tmp/aw.sh; type agentws; declare -f
-   agentws | head'`.
-4. Fix `src/commands/init_shell.rs` (`print_posix`, and re-check `print_fish`)
-   until `source <(agentws init-shell bash)` defines the function and all 9 E2E
-   cases from the earlier test pass.
-5. The intended E2E (re-run once fixed) is in git history / this session:
-   activate sets cwd+env, passthrough runs+returns, deactivate restores, env var
-   scopes `resolve_story`, per-shell isolation, delegate still routes real
-   subcommands, `_list-stories` feeds completion, bad story → clean error.
+The emitted shell code is correct: `bash -n` passes, `source <file>` defines the
+function, and `eval "$(...)"` works perfectly in both bash and zsh.
+
+**One real fix made during verification:** zsh printed `command not found: compdef`
+in a non-interactive shell, because `compdef` only exists after `compinit` runs.
+Guarded the `compdef _agentws agentws` call so it silently skips when compinit
+hasn't run:
+```zsh
+if (( $+functions[compdef] )); then
+  compdef _agentws agentws
+fi
+```
+Now there's no warning in `zsh -c`, and completion still installs in interactive
+shells where compinit has run.
+
+**Fish:** implemented in `init_shell.rs` (`print_fish`) but **untested** — fish is
+not installed on this machine. Verify when convenient.
 
 ---
 
@@ -163,7 +159,7 @@ src/
     ├── new.rs list.rs status.rs open.rs delete.rs use_ws.rs
     ├── add.rs remove.rs expand.rs lifecycle.rs
     ├── mcp_config.rs completions.rs
-    └── init_shell.rs   # 🔴 conda-style fn — HAS THE BUG
+    └── init_shell.rs   # conda-style activate/deactivate function (bash+zsh verified)
 ```
 Deleted: `src/agent.rs`, `src/commands/launch.rs`.
 
@@ -180,14 +176,14 @@ cargo install --path . --locked --force  # → ~/.cargo/bin/agentws
 mkdir -p ~/.config/agentws
 printf 'repo_roots = ["~/work"]\n' > ~/.config/agentws/config.toml
 
-# core (works today)
+# shell integration (one-time, in your rc file)
+eval "$(agentws init-shell bash)"   # or zsh
+
+# core
 agentws new my-story --repos svc-a,svc-b
 agentws list
-agentws status
-cd "$(agentws open my-story)"
 
-# the intended conda flow (BROKEN until §4 is fixed):
-eval "$(agentws init-shell bash)"
+# the conda flow (verified working)
 agentws activate my-story        # cd in + set $AGENTWS_WORKSPACE
 agentws activate my-story pi     # run pi in workspace, return
 agentws deactivate
@@ -197,18 +193,15 @@ agentws deactivate
 
 ## 7. Commit state
 
-- **Committed (4):** P0 core → docs → P1+P2 expansion → active-workspace pointer.
-- **Uncommitted (working tree):** the entire architecture pivot (removed
-  agent.rs/launch.rs/agent-fields; new init-shell conda function; AGENTWS_WORKSPACE
-  in resolve chain; `_list-stories`). **Builds clean. activate/deactivate buggy.**
-- Suggested on resume: **fix §4 first, then commit the pivot as one clean commit.**
-  (Don't commit the broken activate.) If you'd rather checkpoint now, commit with a
-  `wip:` prefix and amend after the fix.
+- 6 commits on `main`. The pivot, the zsh `compdef` guard, README, and this status
+  are all committed.
+- Tree is clean after the verification commit.
 
 ---
 
 ## 8. Deferred / out of scope (per user)
 
 - pi MCP extension (user said "leave the mcp for now").
+- Fish verification (implemented, untested here).
 - tmux inline approval, SQLite manifest, env-file cross-repo wiring, optional hard
   sandbox, prompt `[story]` marker, auto-activate on `new`. All noted in PLAN.md P3.
