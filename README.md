@@ -105,6 +105,17 @@ agentws archive <story>                              # remove worktrees, keep ma
 agentws restore <story>                              # recreate worktrees from manifest
 ```
 
+### Activation (sourced shell function)
+
+`activate`/`deactivate` are **shell functions**, not binary subcommands — load them
+once via [`agentws init-shell`](#integration) (see [The activation model](#the-activation-model)):
+
+```bash
+agentws activate <story>            # cd into the workspace + set $AGENTWS_WORKSPACE
+agentws activate <story> pi -c      # one-shot: run a command there, then return
+agentws deactivate                  # restore cwd + unset env
+```
+
 ### Permission-gated expansion
 
 ```bash

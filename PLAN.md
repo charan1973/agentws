@@ -284,6 +284,11 @@ agentws _list-stories                         # (hidden) story names for complet
 > so `pi -c` / `/resume` from inside an activated workspace just works. Removed
 > from the list.
 
+### P4 — Skills/AGENTS.md picker, per-repo honoring, templates *(designed — see §12)*
+- [ ] central library (`~/.config/agentws/library/` + `library_dirs`) + picker: skills & AGENTS.md snippets in `new`
+- [ ] per-repo skills/AGENTS honoring (root pointers + symlinked skill pool + explicit per-agent settings)
+- [ ] templates (`new --template`, `template save --from`)
+
 ## 10. Project structure
 
 ```
@@ -331,3 +336,110 @@ agentws/
 | chrono         | timestamps in manifest/requests       |
 | libc           | SIGPIPE reset (unix)                  |
 | tempfile (dev) | unit + integration tests              |
+
+## 12. Planned (P4): skills/AGENTS.md picker, per-repo honoring, templates
+
+**Status: designed, not built. No code yet — this section is the spec.**
+
+### 12.1 Problem / goal
+- Today `new` picks repos only and writes a single root `AGENTS.md`. There's no way
+  to pick skills or AGENTS.md snippets from a shared library, and no presets.
+- Per-repo guidance (each repo's own `AGENTS.md` / `.agents/skills/`) is invisible
+  from the workspace root: agents run from the root and don't auto-descend into
+  subdirs, and pi discovers project skills only up to the git root — and each
+  worktree *is* its own git root — so per-repo skills aren't found from the root.
+- agentws's only lever is the **filesystem at the workspace root** (it does not
+  control the agent process), so the solution is composition at the root.
+
+### 12.2 Grounding — how agents discover these (verified against pi docs)
+- **pi** discovers skills from global (`~/.pi/agent/skills/`, `~/.agents/skills/`)
+  and **project** locations (`.pi/skills/`, `.agents/skills/` in cwd + ancestors up
+  to the git root), plus an explicit `skills` array in `.pi/settings.json` and
+  `--skill <path>`. ⚠️ **pi docs never mention `AGENTS.md`** — treat skills +
+  settings as the pi path until proven otherwise.
+- **claude/codex** honor `AGENTS.md` (claude also reads `CLAUDE.md`).
+- `.agents/skills/` is the cross-harness **Agent Skills standard** location → one
+  artifact serves pi/claude/codex.
+
+### 12.3 Central library (new)
+```
+~/.config/agentws/library/
+  skills/<name>/SKILL.md      # Agent Skills standard
+  agents/<name>.md            # reusable AGENTS.md snippets/sections
+  templates/<name>.toml       # see 12.6
+```
+- Extensible: `library_dirs = ["~/team-skills-repo"]` → external sources appear in
+  the picker too (team-shared git repo; single source of truth).
+- `agentws library list | add <path> | remove <name>`.
+
+### 12.4 Picker in `new`
+Reuse the existing `ratatui` fuzzy multi-select, sequenced: repos → skills →
+agents-md. Non-interactive flags mirror `--repos`: `--skills a,b`,
+`--agents-md x,y`, and `--template t` (short-circuits all pickers).
+
+### 12.5 Per-repo honoring — the answer to "how do tools honor per-repo skills/AGENTS.md?"
+Three layered mechanisms; **(1) is the default**, (2)+(3) harden it:
+
+1. **Behavioral pointers in root `AGENTS.md`** (universal, always fresh, no
+   duplication). Lists each repo's `./<repo>/AGENTS.md` and tells the agent to read
+   the repo's own guidance + `./<repo>/.agents/skills/` before editing there. Stays
+   correct across `git pull` (points at the real files).
+2. **Symlink per-repo skills into the root pool.** Link each
+   `./<repo>/.agents/skills/*` (and `.pi/skills/*`) into root
+   `.agents/skills/<repo>-<skill>` (repo-prefixed to avoid name clashes), so pi
+   discovers them from the root despite the git-root scan limitation.
+3. **Explicit per-agent settings lists** (strongest guarantee). `.pi/settings.json`
+   `skills` array enumerates exact paths incl. `./api/.agents/skills/…` — no
+   discovery, no ambiguity. (claude/codex equivalents if targeted.)
+
+Plus `agentws refresh`: rebuilds the root `AGENTS.md` + re-syncs symlinks/settings
+after `add`/`remove`, a library edit, or a `git pull` that changes a repo's skills.
+Idempotent and cheap.
+
+> **Trust (pi):** pi loads **project** skills only after you trust the dir
+> (first-run prompt). agentws can't pre-trust — document "approve trust on first
+> `pi` run". Global skills (`~/.pi/agent/skills/`) need no trust but aren't
+> per-workspace.
+
+### 12.6 Templates
+A named preset of the whole `new` selection set:
+```toml
+# ~/.config/agentws/templates/<name>.toml
+repos = ["api", "web", "payments"]      # names, or globs like "svc-*"
+skills = ["react-testing"]
+agents_md = ["house-style"]
+base = "main"
+symlinks = ["node_modules"]
+post_create = "pnpm install"
+```
+- `agentws new <story> --template <name>` → applies non-interactively.
+- `agentws template save <name> [--from <story>]` → snapshots an existing
+  workspace's selections ("this setup worked, reuse it").
+- `agentws template list | show <name> | delete <name> | edit <name>`.
+- Templates reference library items **by name**, so a library update propagates to
+  every workspace that symlinks it (no stale copies). Partial templates (only some
+  fields) fall back to the interactive picker for the rest; a `[default]` template
+  makes bare `agentws new <story>` use it.
+
+### 12.7 Composition at workspace root (on `new`/`add`)
+- `.agents/skills/<name>` → **symlink** to the library skill (default; `--copy` to
+  snapshot). Cross-harness, single source of truth.
+- `AGENTS.md` → scope section (existing) + selected snippet sections + the per-repo
+  pointers from 12.5.1.
+- `.pi/settings.json` = `{ "skills": [...] }` (only if pi is a target) — explicit,
+  bypasses discovery ambiguity.
+
+### 12.8 Manifest additions
+```jsonc
+"skills":    [{ "name": "…", "source": "library|repo", "path": "…" }],
+"agents_md": [{ "name": "…", "source": "library" }]
+```
+Records selections so `refresh`, `status`, and `template save --from` work.
+
+### 12.9 Open decisions (resolve before building)
+1. Symlink vs copy skills into the workspace → default **symlink**.
+2. Ship the universal baseline (`AGENTS.md` + `.agents/skills/`) only, or also emit
+   `.pi/settings.json` / claude+codex configs? **Recommend:** baseline now; per-agent
+   emission behind a flag.
+3. Library location = `~/.config/agentws/library/` + `library_dirs`. OK?
+4. **Confirm pi reads `AGENTS.md`** (else skills + settings remain the pi path).
