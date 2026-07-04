@@ -91,7 +91,9 @@ agentws list                                         # list workspaces, * marks 
 agentws status [story]                               # show repos, branches, requests
 agentws open <story>                                 # print workspace root path
 agentws use <story>                                  # set the global active pointer
-agentws delete <story> [--yes]                       # remove worktrees + manifest
+agentws delete [story...] [--dry-run] [--force] [--yes]   # remove worktrees + manifest;
+                                                     # bare `delete` = fuzzy multi-select;
+                                                     # dirty worktrees kept unless --force
 ```
 
 ### Working inside a workspace

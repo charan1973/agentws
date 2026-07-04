@@ -78,7 +78,7 @@ fn print_posix(shell: &str) -> Result<()> {
         completions init-shell)
   if (( CURRENT == 2 )); then
     _wanted commands expl 'command' compadd -- $subs
-  elif [[ $words[2] == activate && $CURRENT == 3 ]]; then
+  elif [[ $words[2] == (activate|delete) ]] && (( CURRENT >= 3 )); then
     stories=(${(f)"$(command agentws _list-stories 2>/dev/null)"})
     _wanted stories expl 'story' compadd -- $stories
   fi

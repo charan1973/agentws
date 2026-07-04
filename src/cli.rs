@@ -50,9 +50,18 @@ pub enum Command {
         story: Option<String>,
     },
 
-    /// Delete a workspace (removes worktrees + manifest; branches are kept).
+    /// Delete one or more workspaces (removes worktrees + manifest; branches kept).
+    /// Bare `delete` opens a fuzzy multi-select; dirty worktrees are kept unless
+    /// `--force` (a single named workspace keeps the legacy force behavior).
     Delete {
-        story: String,
+        /// Workspace names to delete. With none, opens the fuzzy picker.
+        stories: Vec<String>,
+        /// List what would be deleted and change nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Also delete workspaces with uncommitted changes (kept by default).
+        #[arg(long)]
+        force: bool,
         /// Skip the confirmation prompt.
         #[arg(long)]
         yes: bool,
@@ -139,7 +148,9 @@ pub fn run() -> Result<()> {
         }
         Command::Open { story } => commands::open::run(&story),
         Command::Code { story } => commands::code::run(story),
-        Command::Delete { story, yes } => commands::delete::run(&story, yes),
+        Command::Delete { stories, dry_run, force, yes } => {
+            commands::delete::run(stories, dry_run, force, yes)
+        }
         Command::Add { repo, story, base } => commands::add::run(story, repo, base),
         Command::Remove { repo, story } => commands::remove::run(story, repo),
         Command::Request { repo, story, reason } => {

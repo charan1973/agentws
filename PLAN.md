@@ -443,3 +443,50 @@ Records selections so `refresh`, `status`, and `template save --from` work.
    emission behind a flag.
 3. Library location = `~/.config/agentws/library/` + `library_dirs`. OK?
 4. **Confirm pi reads `AGENTS.md`** (else skills + settings remain the pi path).
+
+## 13. Backlog — workspace cleanup ops (nice-to-have, NOT scheduled yet)
+
+> Lower priority than P3 (§9) and P4 (§12). Captured so it isn't forgotten.
+> **Do not implement yet** — other work comes first.
+
+### 13.1 Uninstall / global cleanup with dry-run
+
+Remove agentws's footprint, gated behind a mandatory dry-run that lists exactly
+what will go before changing anything.
+
+```
+agentws uninstall --dry-run     # enumerate everything that would be removed; change nothing
+agentws uninstall               # actually remove — MANDATORY confirm (`--yes` cannot bypass)
+```
+
+Dry-run must show, per workspace: name, repo/worktree count, and how many
+worktrees carry **uncommitted changes**. Per §13.2, dirty worktrees are **kept by
+default** (`--force` opts in to removing them) — so the dry-run surfaces them
+rather than warning of silent deletion. Scope TBD: just `~/.agentws/<story>/` workspaces + the `.current`
+pointer by default, with config dir + installed binary behind explicit flags.
+
+### 13.2 Bulk delete (backlog — shape agreed, not scheduled)
+
+Two entry points sharing one deletion path:
+
+- **Interactive:** fuzzy multi-select of workspaces → confirm → delete chosen set.
+  The fuzzy multi-select machinery already exists in `src/picker.rs`
+  (`toggle_selected` / `chosen()` / `HashSet`), but is typed to `discovery::Repo`;
+  needs generalizing (generic over `T`, or a workspace picker). Moderate effort.
+- **Agent/script-accessible:** accept multiple positionals — `agentws delete ws-1 ws-2 ws-3`
+  — backward compatible with the single-name form. **No `--bulk` flag**; bare
+  `agentws delete` (no args) opens the fuzzy picker instead.
+
+Resolved shape: `agentws delete [ws...] [--all] [--dry-run] [--force] [--yes]`.
+
+Shared with 13.1: `--dry-run` (workspace + worktree + dirty counts), one
+aggregate `[y/N]` confirm for the batch (skippable via `--yes`), branches kept
+(surfaced in dry-run), and an MCP `delete_workspaces` tool mirroring `request_repo`.
+
+Safety semantics (resolved):
+- **Dirty worktrees are kept by default** — bulk delete lists and skips them; no
+  worktree with uncommitted changes is removed unless `--force` is passed. (Today's
+  single-name `delete` forces unconditionally and stays that way; only bulk adds the
+  safer default.)
+- **`--all` mandates explicit confirmation** that `--yes` cannot bypass — deleting
+  every workspace always prompts (e.g. retype the count to proceed).

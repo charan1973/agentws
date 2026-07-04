@@ -21,15 +21,49 @@ use std::time::Duration;
 
 type Term = Terminal<CrosstermBackend<Stdout>>;
 
-struct PickerState {
-    items: Vec<Repo>,
+/// An item renderable + selectable in the fuzzy multi-select picker.
+///
+/// Generic so the same UI serves repo selection (`new`) and workspace-name
+/// selection (`delete`): the fuzzy match runs against `label`, identity is `key`,
+/// and `detail` is extra non-matched text (e.g. a repo's path).
+pub trait Pickable {
+    fn key(&self) -> String;
+    fn label(&self) -> String;
+    fn detail(&self) -> String {
+        String::new()
+    }
+}
+
+impl Pickable for Repo {
+    fn key(&self) -> String {
+        self.path.to_string_lossy().to_string()
+    }
+    fn label(&self) -> String {
+        self.name.clone()
+    }
+    fn detail(&self) -> String {
+        self.path.display().to_string()
+    }
+}
+
+impl Pickable for String {
+    fn key(&self) -> String {
+        self.clone()
+    }
+    fn label(&self) -> String {
+        self.clone()
+    }
+}
+
+struct PickerState<T: Pickable> {
+    items: Vec<T>,
     filter: String,
     selected: HashSet<String>,
     cursor: usize,
 }
 
-impl PickerState {
-    fn new(items: Vec<Repo>) -> Self {
+impl<T: Pickable> PickerState<T> {
+    fn new(items: Vec<T>) -> Self {
         Self {
             items,
             filter: String::new(),
@@ -38,27 +72,23 @@ impl PickerState {
         }
     }
 
-    fn key_of(r: &Repo) -> String {
-        r.path.to_string_lossy().to_string()
-    }
-
-    /// Repos matching the current filter, best score first.
-    fn filtered(&self) -> Vec<&Repo> {
+    /// Items matching the current filter, best score first.
+    fn filtered(&self) -> Vec<&T> {
         let matcher = SkimMatcherV2::default();
-        let mut scored: Vec<(i64, &Repo)> = self
+        let mut scored: Vec<(i64, &T)> = self
             .items
             .iter()
-            .filter_map(|r| {
+            .filter_map(|it| {
                 if self.filter.is_empty() {
-                    return Some((0, r));
+                    return Some((0, it));
                 }
-                matcher.fuzzy_match(&r.name, &self.filter).map(|s| (s, r))
+                matcher.fuzzy_match(&it.label(), &self.filter).map(|s| (s, it))
             })
             .collect();
         if !self.filter.is_empty() {
-            scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.name.cmp(&b.1.name)));
+            scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.label().cmp(&b.1.label())));
         }
-        scored.into_iter().map(|(_, r)| r).collect()
+        scored.into_iter().map(|(_, it)| it).collect()
     }
 
     fn move_cursor(&mut self, delta: i32) {
@@ -80,7 +110,7 @@ impl PickerState {
     fn toggle_selected(&mut self) {
         let key = {
             let f = self.filtered();
-            f.get(self.cursor).map(|r| PickerState::key_of(r))
+            f.get(self.cursor).map(|it| it.key())
         };
         if let Some(key) = key {
             if !self.selected.insert(key.clone()) {
@@ -89,17 +119,34 @@ impl PickerState {
         }
     }
 
-    fn chosen(&self) -> Vec<Repo> {
+    fn chosen(&self) -> Vec<T>
+    where
+        T: Clone,
+    {
         self.items
             .iter()
-            .filter(|r| self.selected.contains(&Self::key_of(r)))
+            .filter(|it| self.selected.contains(&it.key()))
             .cloned()
             .collect()
     }
 }
 
-/// Open a full-screen fuzzy multi-select. Returns `None` if cancelled or empty.
+/// Full-screen fuzzy multi-select over repos (used by `new`).
+/// Returns `None` if cancelled or empty.
 pub fn pick(items: Vec<Repo>) -> Result<Option<Vec<Repo>>> {
+    pick_generic(items, "repos", "Repos")
+}
+
+/// Full-screen fuzzy multi-select over arbitrary strings (used by `delete`).
+pub fn pick_strings(items: Vec<String>) -> Result<Option<Vec<String>>> {
+    pick_generic(items, "workspaces", "Workspaces")
+}
+
+fn pick_generic<T: Pickable + Clone>(
+    items: Vec<T>,
+    noun_lower: &str,
+    title: &str,
+) -> Result<Option<Vec<T>>> {
     if items.is_empty() {
         return Ok(None);
     }
@@ -111,7 +158,7 @@ pub fn pick(items: Vec<Repo>) -> Result<Option<Vec<Repo>>> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut state = PickerState::new(items);
-    let result = run(&mut terminal, &mut state);
+    let result = run(&mut terminal, &mut state, noun_lower, title);
 
     // Always restore the terminal.
     disable_raw_mode().ok();
@@ -120,9 +167,14 @@ pub fn pick(items: Vec<Repo>) -> Result<Option<Vec<Repo>>> {
     result
 }
 
-fn run(terminal: &mut Term, state: &mut PickerState) -> Result<Option<Vec<Repo>>> {
+fn run<T: Pickable + Clone>(
+    terminal: &mut Term,
+    state: &mut PickerState<T>,
+    noun_lower: &str,
+    title: &str,
+) -> Result<Option<Vec<T>>> {
     loop {
-        terminal.draw(|f| ui(f, state))?;
+        terminal.draw(|f| ui(f, state, noun_lower, title))?;
 
         if !event::poll(Duration::from_millis(250))? {
             continue;
@@ -159,7 +211,12 @@ fn run(terminal: &mut Term, state: &mut PickerState) -> Result<Option<Vec<Repo>>
     }
 }
 
-fn ui(frame: &mut Frame, state: &mut PickerState) {
+fn ui<T: Pickable>(
+    frame: &mut Frame,
+    state: &mut PickerState<T>,
+    noun_lower: &str,
+    title: &str,
+) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -170,12 +227,11 @@ fn ui(frame: &mut Frame, state: &mut PickerState) {
         .split(frame.area());
 
     // Input box.
-    let input = Paragraph::new(format!(" {}", state.filter))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Filter (type to fuzzy-match repos)"),
-        );
+    let input = Paragraph::new(format!(" {}", state.filter)).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(format!("Filter (type to fuzzy-match {noun_lower})")),
+    );
     frame.render_widget(input, chunks[0]);
 
     // Build list items from the filtered set.
@@ -184,18 +240,19 @@ fn ui(frame: &mut Frame, state: &mut PickerState) {
         let count = filtered.len();
         let items: Vec<ListItem> = filtered
             .iter()
-            .map(|r| {
-                let check = if state.selected.contains(&PickerState::key_of(r)) {
+            .map(|it| {
+                let check = if state.selected.contains(&it.key()) {
                     "[x]"
                 } else {
                     "[ ]"
                 };
-                ListItem::new(Line::raw(format!(
-                    " {} {:<26} {}",
-                    check,
-                    r.name,
-                    r.path.display()
-                )))
+                let detail = it.detail();
+                let line = if detail.is_empty() {
+                    format!(" {} {}", check, it.label())
+                } else {
+                    format!(" {} {:<26} {}", check, it.label(), detail)
+                };
+                ListItem::new(Line::raw(line))
             })
             .collect();
         (items, count)
@@ -211,7 +268,7 @@ fn ui(frame: &mut Frame, state: &mut PickerState) {
     let list = List::new(list_items)
         .block(
             Block::default().borders(Borders::ALL).title(format!(
-                "Repos ({count}) — ↑/↓ move · Space toggle · Enter confirm · Esc cancel"
+                "{title} ({count}) — ↑/↓ move · Space toggle · Enter confirm · Esc cancel"
             )),
         )
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
