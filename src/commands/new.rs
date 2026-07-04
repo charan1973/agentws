@@ -96,6 +96,7 @@ pub fn run(story: &str, repos: Option<Vec<String>>, base: Option<String>) -> Res
     };
     manifest::save(&ws)?;
     manifest::set_current(story)?;
+    crate::vscode::write_workspace(&ws)?;
 
     println!("\nworkspace '{story}' ready at {}\n", root.display());
     println!("activate it, then run any agent (pi / claude / codex / opencode):");

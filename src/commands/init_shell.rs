@@ -73,7 +73,7 @@ fn print_posix(shell: &str) -> Result<()> {
     let completion = if shell == "zsh" {
         r##"_agentws() {
   local -a subs stories
-  subs=(activate deactivate new list use status open delete add remove
+  subs=(activate deactivate new list use status open code delete add remove
         request pending approve deny archive restore mcp mcp-config
         completions init-shell)
   if (( CURRENT == 2 )); then

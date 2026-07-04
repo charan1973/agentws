@@ -103,7 +103,17 @@ agentws add <repo> [--story story]                   # add another repo now
 agentws remove <repo> [--story story]                # drop a repo from the workspace
 agentws archive <story>                              # remove worktrees, keep manifest
 agentws restore <story>                              # recreate worktrees from manifest
+agentws code [--story story]                          # open in VS Code (multi-root)
 ```
+
+`agentws code` opens the workspace in VS Code via a generated multi-root
+`.code-workspace` (one top-level folder per repo worktree), so each worktree
+shows as a flat root and gets its own Source Control entry — handy for diffing
+a single worktree against `main` in the GUI. The file is regenerated on
+`new`/`add`/`remove`/`restore` and removed on `archive`; `agentws code` also
+recreates it if missing. Like the others, `story` is inferred from
+`$AGENTWS_WORKSPACE` / cwd, so a bare `agentws code` from inside an activated
+workspace just works.
 
 ### Activation (sourced shell function)
 

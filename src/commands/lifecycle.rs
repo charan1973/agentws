@@ -12,6 +12,7 @@ pub fn archive(story: String) -> Result<()> {
     }
     ws.archived = true;
     manifest::save(&ws)?;
+    crate::vscode::remove_workspace(&ws)?;
     println!("archived '{story}' (manifest kept). Restore with: agentws restore {story}");
     Ok(())
 }
@@ -26,6 +27,7 @@ pub fn restore(story: String) -> Result<()> {
     }
     ws.archived = false;
     manifest::save(&ws)?;
+    crate::vscode::write_workspace(&ws)?;
     println!("restored '{story}'.");
     Ok(())
 }

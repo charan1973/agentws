@@ -13,4 +13,5 @@ pub mod mcp;
 pub mod ops;
 pub mod picker;
 pub mod util;
+pub mod vscode;
 pub mod worktree;

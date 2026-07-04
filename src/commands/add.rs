@@ -6,6 +6,7 @@ pub fn run(story: Option<String>, repo: String, base: Option<String>) -> Result<
     let mut ws = manifest::load(&story)?;
     let entry = ops::add_repo_to_workspace(&mut ws, &repo, base.as_deref())?;
     manifest::save(&ws)?;
+    crate::vscode::write_workspace(&ws)?;
     println!(
         "added '{}' to '{}'  ->  {}",
         entry.name,

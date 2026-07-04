@@ -48,6 +48,7 @@ pub fn approve(story: Option<String>, id_or_repo: String) -> Result<()> {
     ws.requests[idx].status = "approved".into();
     ws.requests[idx].resolved = Some(Utc::now());
     manifest::save(&ws)?;
+    crate::vscode::write_workspace(&ws)?;
 
     let path = ws
         .repos

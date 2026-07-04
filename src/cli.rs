@@ -42,6 +42,14 @@ pub enum Command {
     /// Print the workspace root path (use `cd "$(agentws open <story>)"`).
     Open { story: String },
 
+    /// Open the workspace in VS Code via a generated multi-root `.code-workspace`.
+    /// `story` is optional and resolved like other commands; a bare `agentws code`
+    /// from inside an activated workspace just works.
+    Code {
+        #[arg(long)]
+        story: Option<String>,
+    },
+
     /// Delete a workspace (removes worktrees + manifest; branches are kept).
     Delete {
         story: String,
@@ -130,6 +138,7 @@ pub fn run() -> Result<()> {
             commands::status::run(s)
         }
         Command::Open { story } => commands::open::run(&story),
+        Command::Code { story } => commands::code::run(story),
         Command::Delete { story, yes } => commands::delete::run(&story, yes),
         Command::Add { repo, story, base } => commands::add::run(story, repo, base),
         Command::Remove { repo, story } => commands::remove::run(story, repo),
