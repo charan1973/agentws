@@ -20,15 +20,18 @@ pub fn archive(story: String) -> Result<()> {
 
 /// Recreate worktrees from a (possibly archived) manifest.
 pub fn restore(story: String) -> Result<()> {
-    let ws = manifest::mutate(&story, |ws| {
+    manifest::mutate(&story, |ws| {
         for r in &mut ws.repos {
             worktree::add_worktree(&r.origin, &r.worktree, &r.branch, &r.base)?;
-            crate::ops::apply_symlinks(&r.origin, &r.worktree);
-            crate::ops::run_post_create(&r.worktree);
+        }
+        for r in &ws.repos {
+            crate::ops::apply_workspace_setup(ws, &r.origin, &r.worktree);
         }
         ws.archived = false;
         Ok(ws.clone())
     })?;
+    super::refresh::refresh_story(&story)?;
+    let ws = manifest::load(&story)?;
     crate::vscode::write_workspace(&ws)?;
     let wired = crate::ops::wire_env(&ws)?;
     if wired > 0 {

@@ -15,6 +15,7 @@ Each story gets a fresh directory — `~/.agentws/<story>/` — containing `git 
 - [Quick start](#quick-start)
 - [The activation model](#the-activation-model)
 - [Commands](#commands)
+- [Skills, guidance, and templates](#skills-guidance-and-templates)
 - [Configuration](#configuration)
 - [Permission-gated expansion](#permission-gated-expansion)
 - [Tips](#tips)
@@ -86,7 +87,8 @@ agentws init-shell fish | source
 ### Workspace lifecycle
 
 ```bash
-agentws new <story> [--repos a,b,c] [--base main]   # create worktrees + activate hint
+agentws new <story> [--repos a,b,c] [--base main]   # interactive repos → skills → guidance
+  [--skills x,y] [--agents-md x,y] [--template t] [--copy]
 agentws list                                         # list workspaces, * marks active
 agentws status [story]                               # show repos, branches, requests
 agentws open <story>                                 # print workspace root path
@@ -104,6 +106,7 @@ Once activated (or when run from inside a workspace), these resolve the target w
 agentws add <repo> [--story story]                   # add another repo now
 agentws remove <repo> [--story story]                # drop a repo from the workspace
 agentws rewire [--story story]                       # refresh cross-repo dotenv values
+agentws refresh [--story story]                      # recompose guidance + skills/settings
 agentws archive <story>                              # remove worktrees, keep manifest
 agentws restore <story>                              # recreate worktrees from manifest
 agentws code [--story story]                          # open in VS Code (multi-root)
@@ -173,6 +176,73 @@ outside the workspace, required Git metadata, system runtime paths, and any
 explicit `--allow-read`/`--allow-write` paths. It uses Apple's deprecated
 `sandbox-exec`, so it is an escape hatch rather than the default scoping model.
 
+### Library and templates
+
+```bash
+agentws library list
+agentws library add ./my-skill                 # skill dir containing SKILL.md
+agentws library add ./house-style.md           # reusable AGENTS.md section
+agentws library add ./full-stack.toml           # workspace template
+agentws library remove review [--kind skill]
+
+agentws template list
+agentws template show full-stack
+agentws template save full-stack --from auth-payments
+agentws template edit full-stack
+agentws template delete full-stack
+```
+
+## Skills, guidance, and templates
+
+The built-in library lives at `~/.config/agentws/library/`:
+
+```text
+library/
+├── skills/<name>/SKILL.md
+├── agents/<name>.md
+└── templates/<name>.toml
+```
+
+`agentws new` reuses the existing fuzzy multi-select in this order: repositories,
+skills, then AGENTS.md snippets. The corresponding flags make any stage
+non-interactive. Library skills are symlinked into the workspace by default so
+source edits propagate immediately; pass `--copy` for a point-in-time snapshot.
+
+Every creation and `agentws refresh` composes:
+
+- root `AGENTS.md` and `CLAUDE.md` with workspace scope, selected snippets, and
+  pointers to each repository's own instruction files;
+- library and namespaced repository-local skills under `.agents/skills/`, plus a
+  Claude-compatible `.claude/skills/` mirror;
+- a merged `.pi/settings.json` whose explicit `skills` entries point at the
+  managed root pool while preserving unrelated Pi settings.
+
+`new`, `add`, `remove`, `approve`, and `restore` refresh composition
+automatically. Run `agentws refresh` after a Git pull or library edit that changes
+repo-local skills/instructions. Pi requires you to approve its project-trust
+prompt on first use; agentws cannot pre-trust a project.
+
+A template can contain all or part of the creation setup:
+
+```toml
+repos = ["api", "web", "svc-*"]
+skills = ["react-testing"]
+agents_md = ["house-style"]
+base = "main"
+symlinks = ["node_modules"]
+post_create = "pnpm install"
+copy_skills = false
+```
+
+Missing repository/skill/guidance fields fall back to the interactive picker.
+Names and glob selectors are resolved at creation time. To make bare
+`agentws new <story>` use a preset, configure:
+
+```toml
+[default]
+template = "full-stack"
+```
+
 ---
 
 ## Configuration
@@ -182,6 +252,9 @@ explicit `--allow-read`/`--allow-write` paths. It uses Apple's deprecated
 ```toml
 # Roots that will be scanned for git repositories.
 repo_roots = ["~/work"]
+
+# Additional library roots using skills/, agents/, templates/ subdirectories.
+library_dirs = ["~/team-agentws-library"]
 
 # Default base branch to create story branches from
 # (default: each repo's default branch).
@@ -203,6 +276,9 @@ exposes = { port = "PORT" }
 file = ".env.local"
 consumes = { API_URL = "http://localhost:{api.port}" }
 defaults = { "api.port" = "5000" }
+
+[default]
+template = "full-stack"
 ```
 
 Managed values are kept in a clearly marked block, preserving the rest of the
@@ -268,7 +344,7 @@ a backup. `agentws history` reads the append-only request event log.
 
 ```bash
 cargo build                      # build
-cargo test                       # run unit + integration tests (45 tests)
+cargo test                       # run unit + integration tests (59 tests)
 cargo clippy --all-targets -- -D warnings
 cargo install --path . --locked  # install to ~/.cargo/bin/agentws
 ```
@@ -277,7 +353,8 @@ The crate exposes both a binary (`src/main.rs`) and a library (`src/lib.rs`), so
 the modules are testable: in-module unit tests (`#[cfg(test)]`) cover the pure
 functions and the git/worktree/discovery/manifest logic. The test suite covers
 story resolution, bulk deletion, concurrent SQLite writers, tmux approval, real
-Fish activation, Pi extension loading, and macOS Seatbelt isolation.
+Fish activation, Pi extension loading, macOS Seatbelt isolation, and the full
+P4 library/template/composition lifecycle.
 
 ---
 

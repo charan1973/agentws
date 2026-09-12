@@ -8,7 +8,12 @@ pub fn default_branch(repo: &Path) -> Result<String> {
     if let Ok(out) = Command::new("git")
         .arg("-C")
         .arg(repo)
-        .args(["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"])
+        .args([
+            "symbolic-ref",
+            "--quiet",
+            "--short",
+            "refs/remotes/origin/HEAD",
+        ])
         .output()
     {
         if out.status.success() {
@@ -145,7 +150,11 @@ mod tests {
     use std::process::Command;
 
     fn git(args: &[&str], dir: &Path) {
-        let out = Command::new("git").args(args).current_dir(dir).output().unwrap();
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
         assert!(
             out.status.success(),
             "git {:?} failed: {}",
@@ -182,13 +191,18 @@ mod tests {
 
         add_worktree(&origin, &dest, "feat/story", "main").unwrap();
         assert!(dest.is_dir(), "worktree dir should exist");
-        assert!(dest.join("f.txt").exists(), "committed file should be present");
+        assert!(
+            dest.join("f.txt").exists(),
+            "committed file should be present"
+        );
         // git reports worktree paths canonicalized (macOS: /tmp -> /private/tmp),
         // so compare canonical forms rather than raw paths.
         let canon_dest = dest.canonicalize().unwrap();
         let listed = list_worktrees(&origin).unwrap();
         assert!(
-            listed.iter().any(|p| p.canonicalize().unwrap_or_else(|_| p.clone()) == canon_dest),
+            listed
+                .iter()
+                .any(|p| p.canonicalize().unwrap_or_else(|_| p.clone()) == canon_dest),
             "dest ({}) should be among worktrees: {:?}",
             dest.display(),
             listed
@@ -198,7 +212,10 @@ mod tests {
         assert!(!is_dirty(&dest), "fresh worktree should not be dirty");
         // an untracked change makes it dirty
         std::fs::write(dest.join("untracked.txt"), "x").unwrap();
-        assert!(is_dirty(&dest), "worktree with untracked file should be dirty");
+        assert!(
+            is_dirty(&dest),
+            "worktree with untracked file should be dirty"
+        );
 
         remove_worktree(&origin, &dest).unwrap();
         assert!(!dest.exists(), "dest should be gone after remove");

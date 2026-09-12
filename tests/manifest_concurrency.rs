@@ -19,6 +19,9 @@ fn concurrent_mutations_preserve_every_request_and_event() {
         repos: vec![],
         requests: vec![],
         archived: false,
+        skills: vec![],
+        agents_md: vec![],
+        setup: Default::default(),
     })
     .unwrap();
 

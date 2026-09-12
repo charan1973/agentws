@@ -32,18 +32,26 @@ mod tests {
 
     #[test]
     fn expand_tilde_home_subpath() {
-        let Some(home) = crate::config::home_dir() else { return; };
+        let Some(home) = crate::config::home_dir() else {
+            return;
+        };
         assert_eq!(expand_tilde("~/work"), home.join("work"));
     }
 
     #[test]
     fn expand_tilde_absolute_unchanged() {
-        assert_eq!(expand_tilde("/usr/local/bin"), std::path::PathBuf::from("/usr/local/bin"));
+        assert_eq!(
+            expand_tilde("/usr/local/bin"),
+            std::path::PathBuf::from("/usr/local/bin")
+        );
     }
 
     #[test]
     fn expand_tilde_relative_unchanged() {
-        assert_eq!(expand_tilde("relative/path"), std::path::PathBuf::from("relative/path"));
+        assert_eq!(
+            expand_tilde("relative/path"),
+            std::path::PathBuf::from("relative/path")
+        );
     }
 
     #[test]

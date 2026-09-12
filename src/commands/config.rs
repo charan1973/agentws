@@ -8,15 +8,26 @@ pub fn run() -> Result<()> {
     let cfg = config::load()?;
     println!("agentws configuration\n");
     println!("  config file    : {}", config::config_path()?.display());
-    println!("  workspaces dir : {}", config::workspaces_root()?.display());
+    println!(
+        "  workspaces dir : {}",
+        config::workspaces_root()?.display()
+    );
+    println!("  library dir    : {}", config::library_dir()?.display());
     println!("  cache dir      : {}", config::cache_dir()?.display());
     println!();
     println!("  repo_roots     : {}", fmt_paths(&cfg.repo_roots));
+    println!("  library_dirs   : {}", fmt_paths(&cfg.library_dirs));
     println!(
         "  default_base   : {}",
-        cfg.default_base.as_deref().unwrap_or("(each repo's default)")
+        cfg.default_base
+            .as_deref()
+            .unwrap_or("(each repo's default)")
     );
     println!("  symlinks       : {}", fmt_strs(&cfg.symlinks));
+    println!(
+        "  default tmpl   : {}",
+        cfg.effective_default_template().unwrap_or("(none)")
+    );
     println!(
         "  post_create    : {}",
         cfg.post_create.as_deref().unwrap_or("(none)")

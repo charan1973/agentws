@@ -46,8 +46,7 @@ pub fn add_repo_to_workspace(
         None => worktree::default_branch(&repo.path).unwrap_or_else(|_| "main".to_string()),
     };
     worktree::add_worktree(&repo.path, &dest, &branch, &base)?;
-    apply_symlinks(&repo.path, &dest);
-    run_post_create(&dest);
+    apply_workspace_setup(ws, &repo.path, &dest);
     let entry = manifest::RepoEntry {
         name: name.to_string(),
         origin: repo.path.clone(),
@@ -77,7 +76,11 @@ pub fn apply_symlinks(origin: &Path, dest: &Path) {
         Ok(c) => c,
         Err(_) => return,
     };
-    for pat in &cfg.symlinks {
+    apply_symlinks_with_patterns(origin, dest, &cfg.symlinks);
+}
+
+pub fn apply_symlinks_with_patterns(origin: &Path, dest: &Path, patterns: &[String]) {
+    for pat in patterns {
         // Treat each configured entry as a literal name/glob in the origin root.
         for entry in match glob_in(origin, pat) {
             Ok(v) => v,
@@ -105,7 +108,11 @@ pub fn run_post_create(dest: &Path) {
         Ok(c) => c,
         Err(_) => return,
     };
-    let Some(cmd) = cfg.post_create.as_deref() else {
+    run_post_create_command(dest, cfg.post_create.as_deref());
+}
+
+pub fn run_post_create_command(dest: &Path, command: Option<&str>) {
+    let Some(cmd) = command.filter(|command| !command.trim().is_empty()) else {
         return;
     };
     let _ = std::process::Command::new("sh")
@@ -113,6 +120,19 @@ pub fn run_post_create(dest: &Path) {
         .arg(cmd)
         .current_dir(dest)
         .status();
+}
+
+/// Apply the settings captured when this workspace was created. Manifests
+/// predating P4 intentionally retain the old behavior of consulting current
+/// global configuration.
+pub fn apply_workspace_setup(ws: &manifest::Workspace, origin: &Path, dest: &Path) {
+    if ws.setup.initialized {
+        apply_symlinks_with_patterns(origin, dest, &ws.setup.symlinks);
+        run_post_create_command(dest, ws.setup.post_create.as_deref());
+    } else {
+        apply_symlinks(origin, dest);
+        run_post_create(dest);
+    }
 }
 
 /// Re-read values exposed by one repository and upsert managed dotenv blocks
@@ -505,6 +525,9 @@ mod tests {
             repos: vec![repo("api", &api), repo("web", &web)],
             requests: vec![],
             archived: false,
+            skills: vec![],
+            agents_md: vec![],
+            setup: manifest::WorkspaceSetup::default(),
         };
 
         assert_eq!(wire_env_with_config(&ws, &cfg).unwrap(), 1);

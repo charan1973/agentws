@@ -28,11 +28,7 @@ pub fn workspace_file(ws: &manifest::Workspace) -> PathBuf {
 /// the whole `~/.agentws/<story>/` tree stays relocatable. JSON is built with
 /// `serde_json` so unusual repo names (quotes, backslashes) can't corrupt it.
 pub fn write_workspace(ws: &manifest::Workspace) -> Result<()> {
-    let folders: Vec<Value> = ws
-        .repos
-        .iter()
-        .map(|r| json!({ "path": r.name }))
-        .collect();
+    let folders: Vec<Value> = ws.repos.iter().map(|r| json!({ "path": r.name })).collect();
     let doc = json!({
         "folders": folders,
         "settings": {}
@@ -76,6 +72,9 @@ mod tests {
                 .collect(),
             requests: vec![],
             archived: false,
+            skills: vec![],
+            agents_md: vec![],
+            setup: Default::default(),
         }
     }
 
@@ -83,10 +82,7 @@ mod tests {
     fn workspace_file_is_named_after_story() {
         let dir = tempfile::tempdir().unwrap();
         let ws = ws_with_root(dir.path(), &[]);
-        assert_eq!(
-            workspace_file(&ws),
-            dir.path().join("demo.code-workspace")
-        );
+        assert_eq!(workspace_file(&ws), dir.path().join("demo.code-workspace"));
     }
 
     #[test]

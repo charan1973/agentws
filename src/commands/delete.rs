@@ -89,7 +89,10 @@ pub fn run(stories: Vec<String>, dry_run: bool, force: bool, yes: bool) -> Resul
         }
         return Ok(());
     }
-    println!("will delete {} workspace(s) — branches are kept:", to_delete.len());
+    println!(
+        "will delete {} workspace(s) — branches are kept:",
+        to_delete.len()
+    );
     for (name, ws, dirty) in &to_delete {
         let tag = if *dirty { "  [dirty — forced]" } else { "" };
         println!("  - {name}{tag}  ({} worktree(s))", ws.repos.len());

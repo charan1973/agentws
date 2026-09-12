@@ -43,6 +43,9 @@ fn tmux_mode_starts_a_dedicated_watcher_pane() {
             resolved: None,
         }],
         archived: false,
+        skills: vec![],
+        agents_md: vec![],
+        setup: manifest::WorkspaceSetup::default(),
     };
     let manifest_json = serde_json::to_string_pretty(&workspace).unwrap();
     std::fs::write(root.join("workspace.json"), manifest_json).unwrap();

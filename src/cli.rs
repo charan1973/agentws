@@ -26,6 +26,18 @@ pub enum Command {
         /// Base branch to branch from (default: each repo's default branch).
         #[arg(long)]
         base: Option<String>,
+        /// Pre-select library skills by name (comma-separated).
+        #[arg(long, value_delimiter = ',')]
+        skills: Option<Vec<String>>,
+        /// Pre-select reusable AGENTS.md snippets by name (comma-separated).
+        #[arg(long = "agents-md", value_delimiter = ',')]
+        agents_md: Option<Vec<String>>,
+        /// Apply a named workspace template.
+        #[arg(long)]
+        template: Option<String>,
+        /// Copy selected library skills into the workspace instead of symlinking.
+        #[arg(long)]
+        copy: bool,
     },
 
     /// List all workspaces.
@@ -87,6 +99,23 @@ pub enum Command {
     Rewire {
         #[arg(long)]
         story: Option<String>,
+    },
+    /// Rebuild root instructions and re-sync managed skill/settings composition.
+    Refresh {
+        #[arg(long)]
+        story: Option<String>,
+    },
+
+    /// Manage reusable skills, AGENTS.md snippets, and templates.
+    Library {
+        #[command(subcommand)]
+        action: LibraryAction,
+    },
+
+    /// Manage named workspace templates.
+    Template {
+        #[command(subcommand)]
+        action: TemplateAction,
     },
 
     // ---- expansion (permission-gated) ----
@@ -190,10 +219,53 @@ pub enum Command {
     ToolCall { name: String, arguments: String },
 }
 
+#[derive(Subcommand)]
+pub enum LibraryAction {
+    /// List effective items from the built-in and external libraries.
+    List,
+    /// Add a skill directory, Markdown snippet, or TOML template.
+    Add { path: PathBuf },
+    /// Remove an item from the built-in library.
+    Remove {
+        name: String,
+        /// Disambiguate duplicate names: skill, agents-md, or template.
+        #[arg(long)]
+        kind: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum TemplateAction {
+    /// List effective templates.
+    List,
+    /// Print a template.
+    Show { name: String },
+    /// Snapshot a workspace as a reusable template.
+    Save {
+        name: String,
+        #[arg(long)]
+        from: Option<String>,
+    },
+    /// Delete a template from the built-in library.
+    Delete { name: String },
+    /// Open a template in $VISUAL or $EDITOR and validate it on exit.
+    Edit { name: String },
+}
+
 pub fn run() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::New { story, repos, base } => commands::new::run(&story, repos, base),
+        Command::New {
+            story,
+            repos,
+            base,
+            skills,
+            agents_md,
+            template,
+            copy,
+        } => {
+            commands::new::run_with_options(&story, repos, base, skills, agents_md, template, copy)
+        }
         Command::List => commands::list::run(),
         Command::Use { story } => commands::use_ws::run(&story),
         Command::Status { story } => {
@@ -211,6 +283,19 @@ pub fn run() -> Result<()> {
         Command::Add { repo, story, base } => commands::add::run(story, repo, base),
         Command::Remove { repo, story } => commands::remove::run(story, repo),
         Command::Rewire { story } => commands::env::rewire(story),
+        Command::Refresh { story } => commands::refresh::run(story),
+        Command::Library { action } => match action {
+            LibraryAction::List => commands::library::list(),
+            LibraryAction::Add { path } => commands::library::add(path),
+            LibraryAction::Remove { name, kind } => commands::library::remove(name, kind),
+        },
+        Command::Template { action } => match action {
+            TemplateAction::List => commands::template::list(),
+            TemplateAction::Show { name } => commands::template::show(name),
+            TemplateAction::Save { name, from } => commands::template::save(name, from),
+            TemplateAction::Delete { name } => commands::template::delete(name),
+            TemplateAction::Edit { name } => commands::template::edit(name),
+        },
         Command::Request {
             repo,
             story,

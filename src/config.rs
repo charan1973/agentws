@@ -29,6 +29,12 @@ pub fn config_path() -> Result<PathBuf> {
     Ok(config_dir()?.join("config.toml"))
 }
 
+/// Built-in user library containing reusable skills, instruction snippets,
+/// and workspace templates.
+pub fn library_dir() -> Result<PathBuf> {
+    Ok(config_dir()?.join("library"))
+}
+
 #[allow(dead_code)]
 pub fn cache_dir() -> Result<PathBuf> {
     Ok(home_dir()
@@ -46,6 +52,19 @@ pub struct Config {
     /// Default base branch (default: each repo's default branch).
     #[serde(default)]
     pub default_base: Option<String>,
+
+    /// Additional team/shared library roots. Each root uses the same
+    /// `skills/`, `agents/`, and `templates/` layout as the built-in library.
+    #[serde(default)]
+    pub library_dirs: Vec<PathBuf>,
+
+    /// Template applied to a bare `agentws new <story>` invocation.
+    #[serde(default)]
+    pub default_template: Option<String>,
+
+    /// Preferred structured default configuration (`[default]`).
+    #[serde(default)]
+    pub default: Defaults,
 
     /// Paths to symlink from the original repo into each worktree
     /// (e.g. ["node_modules", ".env*"]). Defaults to none.
@@ -78,6 +97,12 @@ pub struct RepoEnv {
     pub defaults: BTreeMap<String, String>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Defaults {
+    #[serde(default)]
+    pub template: Option<String>,
+}
+
 impl Default for RepoEnv {
     fn default() -> Self {
         Self {
@@ -96,6 +121,26 @@ fn default_env_file() -> PathBuf {
 impl Config {
     pub fn repo_roots_expanded(&self) -> Vec<PathBuf> {
         self.repo_roots.iter().map(expand_tilde).collect()
+    }
+
+    /// Effective library roots in precedence order. The built-in user library
+    /// wins over external roots, then `library_dirs` are considered in order.
+    pub fn library_roots_expanded(&self) -> Result<Vec<PathBuf>> {
+        let mut roots = vec![library_dir()?];
+        for root in &self.library_dirs {
+            let expanded = expand_tilde(root);
+            if !roots.contains(&expanded) {
+                roots.push(expanded);
+            }
+        }
+        Ok(roots)
+    }
+
+    pub fn effective_default_template(&self) -> Option<&str> {
+        self.default
+            .template
+            .as_deref()
+            .or(self.default_template.as_deref())
     }
 }
 
@@ -128,6 +173,9 @@ repo_roots = ["~/work"]
 # Default base branch to create story branches from (default: each repo's default branch).
 # default_base = "main"
 
+# Additional shared library roots. Each contains skills/, agents/, templates/.
+# library_dirs = ["~/team-agentws-library"]
+
 # Paths to symlink from each original repo into its worktree.
 # symlinks = ["node_modules", ".env*"]
 
@@ -143,6 +191,10 @@ repo_roots = ["~/work"]
 # file = ".env.local"
 # consumes = { API_URL = "http://localhost:{api.port}" }
 # defaults = { "api.port" = "5000" }
+
+# Apply a named template to bare `agentws new <story>` commands.
+# [default]
+# template = "full-stack"
 "#;
         fs::write(&path, example)?;
     }
@@ -158,6 +210,9 @@ mod tests {
         let cfg = parse("").unwrap();
         assert!(cfg.repo_roots.is_empty());
         assert!(cfg.default_base.is_none());
+        assert!(cfg.library_dirs.is_empty());
+        assert!(cfg.default_template.is_none());
+        assert!(cfg.default.template.is_none());
         assert!(cfg.symlinks.is_empty());
         assert!(cfg.post_create.is_none());
     }
@@ -170,6 +225,8 @@ repo_roots = ["~/work", "/abs/repos"]
 symlinks = ["node_modules", ".env*"]
 post_create = "npm ci"
 default_base = "develop"
+library_dirs = ["~/team-agentws"]
+default_template = "standard"
 "#,
         )
         .unwrap();
@@ -182,6 +239,9 @@ default_base = "develop"
         );
         assert_eq!(cfg.post_create.as_deref(), Some("npm ci"));
         assert_eq!(cfg.default_base.as_deref(), Some("develop"));
+        assert_eq!(cfg.library_dirs, vec![PathBuf::from("~/team-agentws")]);
+        assert_eq!(cfg.default_template.as_deref(), Some("standard"));
+        assert_eq!(cfg.effective_default_template(), Some("standard"));
         assert!(cfg.env.is_empty());
     }
 
@@ -200,6 +260,24 @@ default_base = "develop"
         let cfg = parse("repo_roots = [\"~/work\"]\n").unwrap();
         let expanded = cfg.repo_roots_expanded();
         assert_eq!(expanded, vec![home.join("work")]);
+    }
+
+    #[test]
+    fn library_roots_put_user_library_first_and_dedupe() {
+        let mut cfg = Config::default();
+        let own = library_dir().unwrap();
+        cfg.library_dirs = vec![own.clone(), PathBuf::from("~/team-agentws")];
+        let roots = cfg.library_roots_expanded().unwrap();
+        assert_eq!(roots[0], own);
+        assert_eq!(roots.len(), 2);
+        assert!(roots[1].ends_with("team-agentws"));
+    }
+
+    #[test]
+    fn structured_default_template_is_preferred() {
+        let cfg =
+            parse("default_template = \"legacy\"\n[default]\ntemplate = \"standard\"\n").unwrap();
+        assert_eq!(cfg.effective_default_template(), Some("standard"));
     }
 
     #[test]

@@ -19,6 +19,56 @@ pub struct Workspace {
     /// Set true after `archive` removes the worktrees.
     #[serde(default)]
     pub archived: bool,
+    /// Library selections plus the per-repository skills discovered by the
+    /// most recent composition refresh.
+    #[serde(default)]
+    pub skills: Vec<SkillSelection>,
+    /// Reusable AGENTS.md snippets selected from the library.
+    #[serde(default)]
+    pub agents_md: Vec<AgentsMdSelection>,
+    /// Creation-time settings retained so restore and template snapshots are
+    /// deterministic even if the global config changes later.
+    #[serde(default)]
+    pub setup: WorkspaceSetup,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceSetup {
+    /// False only for manifests created before P4. Legacy workspaces continue
+    /// to fall back to the current global symlink/hook configuration.
+    #[serde(default)]
+    pub initialized: bool,
+    #[serde(default)]
+    pub template: Option<String>,
+    #[serde(default)]
+    pub symlinks: Vec<String>,
+    #[serde(default)]
+    pub post_create: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkillSelection {
+    /// Materialized name under `.agents/skills/`. Repository skills are
+    /// prefixed with their repository name to prevent collisions.
+    pub name: String,
+    /// `library` or `repo`.
+    pub source: String,
+    /// Absolute source directory containing SKILL.md.
+    pub path: PathBuf,
+    /// Library skills can be copied as a point-in-time snapshot instead of
+    /// symlinked. Repository skills are always linked.
+    #[serde(default)]
+    pub copied: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentsMdSelection {
+    pub name: String,
+    /// Currently always `library`; retained explicitly for forward
+    /// compatibility and parity with skill selections.
+    pub source: String,
+    /// Absolute source Markdown file.
+    pub path: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -168,7 +218,30 @@ fn open_database(path: &Path) -> Result<Connection> {
            reason TEXT
          );
          CREATE INDEX IF NOT EXISTS request_events_request_id
-           ON request_events(request_id, event_id);",
+           ON request_events(request_id, event_id);
+         CREATE TABLE IF NOT EXISTS workspace_setup (
+           singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+           initialized INTEGER NOT NULL,
+           template_name TEXT,
+           post_create TEXT
+         );
+         CREATE TABLE IF NOT EXISTS workspace_symlinks (
+           pattern TEXT NOT NULL,
+           ordinal INTEGER PRIMARY KEY
+         );
+         CREATE TABLE IF NOT EXISTS skills (
+           name TEXT PRIMARY KEY,
+           source TEXT NOT NULL,
+           path TEXT NOT NULL,
+           copied INTEGER NOT NULL,
+           ordinal INTEGER NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS agents_md (
+           name TEXT PRIMARY KEY,
+           source TEXT NOT NULL,
+           path TEXT NOT NULL,
+           ordinal INTEGER NOT NULL
+         );",
     )
     .context("initializing workspace database schema")?;
     Ok(conn)
@@ -184,7 +257,7 @@ fn save_transaction(tx: &Transaction<'_>, ws: &Workspace) -> Result<()> {
     tx.execute(
         "INSERT INTO workspace
            (singleton, schema_version, story, root, created, archived)
-         VALUES (1, 1, ?1, ?2, ?3, ?4)
+         VALUES (1, 2, ?1, ?2, ?3, ?4)
          ON CONFLICT(singleton) DO UPDATE SET
            schema_version = excluded.schema_version,
            story = excluded.story,
@@ -210,6 +283,57 @@ fn save_transaction(tx: &Transaction<'_>, ws: &Workspace) -> Result<()> {
                 repo.worktree.to_string_lossy(),
                 repo.branch,
                 repo.base,
+                ordinal as i64,
+            ],
+        )?;
+    }
+
+    tx.execute(
+        "INSERT INTO workspace_setup
+           (singleton, initialized, template_name, post_create)
+         VALUES (1, ?1, ?2, ?3)
+         ON CONFLICT(singleton) DO UPDATE SET
+           initialized = excluded.initialized,
+           template_name = excluded.template_name,
+           post_create = excluded.post_create",
+        params![
+            i64::from(ws.setup.initialized),
+            ws.setup.template,
+            ws.setup.post_create,
+        ],
+    )?;
+    tx.execute("DELETE FROM workspace_symlinks", [])?;
+    for (ordinal, pattern) in ws.setup.symlinks.iter().enumerate() {
+        tx.execute(
+            "INSERT INTO workspace_symlinks (pattern, ordinal) VALUES (?1, ?2)",
+            params![pattern, ordinal as i64],
+        )?;
+    }
+
+    tx.execute("DELETE FROM skills", [])?;
+    for (ordinal, skill) in ws.skills.iter().enumerate() {
+        tx.execute(
+            "INSERT INTO skills (name, source, path, copied, ordinal)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                skill.name,
+                skill.source,
+                skill.path.to_string_lossy(),
+                i64::from(skill.copied),
+                ordinal as i64,
+            ],
+        )?;
+    }
+
+    tx.execute("DELETE FROM agents_md", [])?;
+    for (ordinal, snippet) in ws.agents_md.iter().enumerate() {
+        tx.execute(
+            "INSERT INTO agents_md (name, source, path, ordinal)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                snippet.name,
+                snippet.source,
+                snippet.path.to_string_lossy(),
                 ordinal as i64,
             ],
         )?;
@@ -388,6 +512,54 @@ fn load_connection(conn: &Connection, path: &Path) -> Result<Workspace> {
         })
         .collect::<Result<Vec<_>>>()?;
 
+    let setup_row: Option<(i64, Option<String>, Option<String>)> = conn
+        .query_row(
+            "SELECT initialized, template_name, post_create
+             FROM workspace_setup WHERE singleton = 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()?;
+    let symlinks = {
+        let mut stmt = conn.prepare("SELECT pattern FROM workspace_symlinks ORDER BY ordinal")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    let setup = setup_row
+        .map(|(initialized, template, post_create)| WorkspaceSetup {
+            initialized: initialized != 0,
+            template,
+            symlinks,
+            post_create,
+        })
+        .unwrap_or_default();
+
+    let skills = {
+        let mut stmt =
+            conn.prepare("SELECT name, source, path, copied FROM skills ORDER BY ordinal")?;
+        let rows = stmt.query_map([], |row| {
+            Ok(SkillSelection {
+                name: row.get(0)?,
+                source: row.get(1)?,
+                path: PathBuf::from(row.get::<_, String>(2)?),
+                copied: row.get::<_, i64>(3)? != 0,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+
+    let agents_md = {
+        let mut stmt = conn.prepare("SELECT name, source, path FROM agents_md ORDER BY ordinal")?;
+        let rows = stmt.query_map([], |row| {
+            Ok(AgentsMdSelection {
+                name: row.get(0)?,
+                source: row.get(1)?,
+                path: PathBuf::from(row.get::<_, String>(2)?),
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+
     Ok(Workspace {
         story: metadata.0,
         root: PathBuf::from(metadata.1),
@@ -395,6 +567,9 @@ fn load_connection(conn: &Connection, path: &Path) -> Result<Workspace> {
         repos,
         requests,
         archived: metadata.3 != 0,
+        skills,
+        agents_md,
+        setup,
     })
 }
 
@@ -587,6 +762,23 @@ mod tests {
                 resolved: None,
             }],
             archived: false,
+            skills: vec![SkillSelection {
+                name: "review".into(),
+                source: "library".into(),
+                path: root.join("library/review"),
+                copied: false,
+            }],
+            agents_md: vec![AgentsMdSelection {
+                name: "house-style".into(),
+                source: "library".into(),
+                path: root.join("library/house-style.md"),
+            }],
+            setup: WorkspaceSetup {
+                initialized: true,
+                template: Some("standard".into()),
+                symlinks: vec!["node_modules".into()],
+                post_create: Some("npm ci".into()),
+            },
         }
     }
 
@@ -606,6 +798,9 @@ mod tests {
         assert_eq!(loaded.requests.len(), 1);
         assert_eq!(loaded.requests[0].status, "pending");
         assert!(!loaded.archived);
+        assert_eq!(loaded.skills, ws.skills);
+        assert_eq!(loaded.agents_md, ws.agents_md);
+        assert_eq!(loaded.setup, ws.setup);
         assert!(root.join("workspace.db").exists());
     }
 
@@ -670,5 +865,71 @@ mod tests {
         let ws = load_path(&path).unwrap();
         assert_eq!(ws.story, "legacy");
         assert!(ws.repos.is_empty());
+        assert!(ws.skills.is_empty());
+        assert!(ws.agents_md.is_empty());
+        assert!(!ws.setup.initialized);
+    }
+
+    #[test]
+    fn schema_v1_database_gains_p4_tables_without_rebuild() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("workspace.db");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE workspace (
+               singleton INTEGER PRIMARY KEY,
+               schema_version INTEGER NOT NULL,
+               story TEXT NOT NULL,
+               root TEXT NOT NULL,
+               created TEXT NOT NULL,
+               archived INTEGER NOT NULL
+             );
+             CREATE TABLE repos (
+               name TEXT PRIMARY KEY, origin TEXT NOT NULL, worktree TEXT NOT NULL,
+               branch TEXT NOT NULL, base TEXT NOT NULL, ordinal INTEGER NOT NULL
+             );
+             CREATE TABLE requests (
+               id TEXT PRIMARY KEY, repo TEXT NOT NULL, reason TEXT, status TEXT NOT NULL,
+               requested_by TEXT NOT NULL, created TEXT NOT NULL, resolved TEXT,
+               ordinal INTEGER NOT NULL
+             );
+             CREATE TABLE request_events (
+               event_id INTEGER PRIMARY KEY AUTOINCREMENT, request_id TEXT NOT NULL,
+               repo TEXT NOT NULL, status TEXT NOT NULL, actor TEXT NOT NULL,
+               occurred TEXT NOT NULL, reason TEXT
+             );",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO workspace
+             (singleton, schema_version, story, root, created, archived)
+             VALUES (1, 1, 'old', ?1, '2026-01-01T00:00:00Z', 0)",
+            [tmp.path().to_string_lossy().as_ref()],
+        )
+        .unwrap();
+        drop(conn);
+
+        let mut ws = load_database(&path).unwrap();
+        assert!(ws.skills.is_empty());
+        assert!(!ws.setup.initialized);
+        ws.skills.push(SkillSelection {
+            name: "review".into(),
+            source: "library".into(),
+            path: tmp.path().join("review"),
+            copied: false,
+        });
+        save(&ws).unwrap();
+        let loaded = load_database(&path).unwrap();
+        assert_eq!(loaded.skills.len(), 1);
+
+        let conn = Connection::open(path).unwrap();
+        let version: i64 = conn
+            .query_row(
+                "SELECT schema_version FROM workspace WHERE singleton = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, 2);
     }
 }

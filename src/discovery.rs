@@ -93,7 +93,11 @@ mod tests {
     use std::process::Command;
 
     fn git(args: &[&str], dir: &Path) {
-        let out = Command::new("git").args(args).current_dir(dir).output().unwrap();
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
         if !out.status.success() {
             panic!(
                 "git {:?} in {} failed: {}",

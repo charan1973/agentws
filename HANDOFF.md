@@ -1,7 +1,7 @@
 # agentws — Handoff / Status
 
-**Date:** 2026-09-12
-**State:** P0-P3 complete. **45 tests green; strict Clippy green.**
+**Date:** 2026-09-13
+**State:** P0-P4 complete. **59 tests green; strict Clippy green.**
 
 > Read this first, then `PLAN.md`. This is the current implementation handoff.
 
@@ -16,9 +16,9 @@
 - P3 is complete: tmux approvals, Pi-native tools, MCP integration installers,
   cross-repo dotenv wiring, verified Fish activation, and an opt-in macOS hard
   sandbox.
-- The verified P3 release binary is installed at `~/.cargo/bin/agentws`.
-- The working tree contains all P3 work and is intentionally uncommitted. Do not
-  commit until the human gives the go-ahead.
+- P4 is implemented: shared library/pickers, durable skill/guidance selections,
+  root composition with repo-local honoring, refresh, and reusable templates.
+- P3 is commit `eb22453` on `master`; the P4 commit follows it.
 
 ---
 
@@ -114,7 +114,9 @@ strict enforcement is required.
 
 ```text
 agentws new/list/use/status/open/code/delete
-agentws add/remove/rewire/archive/restore
+agentws add/remove/rewire/refresh/archive/restore
+agentws library list/add/remove
+agentws template list/show/save/delete/edit
 agentws request/pending/history/approve/deny/approvals
 agentws mcp/mcp-config/integrate/sandbox
 agentws config/discover/completions/init-shell
@@ -127,6 +129,11 @@ agentws config/discover/completions/init-shell
 ## 4. Configuration additions
 
 ```toml
+library_dirs = ["~/team-agentws-library"]
+
+[default]
+template = "full-stack"
+
 [env.api]
 file = ".env.local"
 exposes = { port = "PORT" }
@@ -141,20 +148,52 @@ The dotenv reader intentionally handles ordinary `KEY=value`, quoted values,
 and optional `export`; it is not a shell evaluator and does not expand command
 substitutions or nested environment variables.
 
+The built-in library is `~/.config/agentws/library/` with `skills/`, `agents/`,
+and `templates/` subdirectories. External `library_dirs` use the same layout;
+the built-in library wins name collisions, followed by configured roots in
+order.
+
 ---
 
-## 5. Verification
+## 5. P4 composition and templates
+
+- `new` selects repositories, skills, then AGENTS.md snippets through the shared
+  fuzzy picker. `--repos`, `--skills`, `--agents-md`, and `--template` provide
+  non-interactive inputs; `--copy` snapshots library skills instead of linking.
+- Root `AGENTS.md` and `CLAUDE.md` contain workspace scope, selected reusable
+  snippets, and live pointers to each worktree's instruction/skill locations.
+- Library skills are materialized under `.agents/skills/`; repo-local skills
+  from `.agents/skills`, `.pi/skills`, `.claude/skills`, and
+  `.opencode/skills` receive stable `<repo>-<skill>` names.
+  `.claude/skills/` mirrors the root pool.
+- `.pi/settings.json` receives exact relative managed skill paths while
+  preserving unrelated keys and user-managed skill entries. Pi still prompts
+  for project trust; agentws does not and cannot pre-approve it.
+- SQLite schema v2 stores `skills`, `agents_md`, creation setup, and applied
+  template metadata. Existing schema-v1 databases gain the new tables on open;
+  legacy JSON defaults remain compatible.
+- `refresh` is idempotent and runs automatically after workspace membership
+  changes and library add/remove. Run it after Git pulls or direct library edits.
+- Templates support repository globs, skills, snippets, base, symlinks, hook,
+  and copy mode. Partial templates invoke pickers for missing selection fields;
+  `[default].template` makes a bare `new` non-interactive when the template is
+  complete. `template save --from` snapshots a workspace.
+
+---
+
+## 6. Verification
 
 Current results:
 
 ```text
-cargo test --all-targets                   45 passed, 0 failed
+cargo test --all-targets                   59 passed, 0 failed
 cargo clippy --all-targets -- -D warnings  clean
 ```
 
-Breakdown: 37 library tests and 8 integration tests across story resolution,
+Breakdown: 50 library tests and 9 integration tests across story resolution,
 bulk delete safety, tmux approval, SQLite concurrency, Fish activation, and
-macOS Seatbelt. Pi extension loading is included in the library test suite.
+macOS Seatbelt, plus the P4 template/composition lifecycle. Pi extension loading
+is included in the library test suite.
 
 The Seatbelt integration test must run outside an already restricted sandbox;
 ordinary local terminal runs need no special handling. Fish/Pi load tests skip
@@ -163,10 +202,13 @@ host.
 
 ---
 
-## 6. File map
+## 7. File map
 
 ```text
 src/manifest.rs               SQLite state/history + JSON migration
+src/library.rs                central/external library discovery + import/remove
+src/templates.rs              template model, glob expansion, snapshot persistence
+src/composition.rs            root guidance, skill pools, Pi settings refresh
 src/integrations.rs           Pi/Claude/Codex/OpenCode integration installers
 src/ops.rs                    repo operations + dotenv wiring
 src/mcp.rs                    stdio MCP server + direct Pi bridge
@@ -174,17 +216,21 @@ src/commands/approvals.rs     interactive/tmux watcher
 src/commands/env.rs           rewire command
 src/commands/integrate.rs     integration command
 src/commands/sandbox.rs       macOS Seatbelt wrapper
+src/commands/library.rs       library list/add/remove
+src/commands/template.rs      template list/show/save/delete/edit
+src/commands/refresh.rs       single/all-workspace composition refresh
 tests/approvals_tmux.rs       isolated tmux E2E
 tests/fish_activation.rs      real Fish E2E
 tests/manifest_concurrency.rs concurrent SQLite E2E
 tests/sandbox_macos.rs        filesystem isolation E2E
+tests/p4_composition.rs       P4 template/composition/lifecycle E2E
 ```
 
 ---
 
-## 7. Commit state and next phase
+## 8. Commit state and next phase
 
-- Branch: `master`; 12 existing commits.
-- P3 changes are uncommitted per `AGENTS.md`.
-- P4 remains: shared skill/AGENTS.md library and picker, per-repo guidance
-  honoring, and reusable workspace templates. See `PLAN.md` §12.
+- Branch: `master`; P3 is pushed as `eb22453`.
+- P4 is complete and committed on `master`.
+- No scheduled implementation phase remains; §13 is an explicitly deferred
+  cleanup backlog.

@@ -42,6 +42,9 @@ fn make_story(name: &str) -> PathBuf {
         repos: vec![],
         requests: vec![],
         archived: false,
+        skills: vec![],
+        agents_md: vec![],
+        setup: Default::default(),
     };
     manifest::save(&ws).unwrap();
     root

@@ -22,6 +22,9 @@ fn hard_sandbox_allows_workspace_io_and_blocks_outside_io() {
         repos: vec![],
         requests: vec![],
         archived: false,
+        skills: vec![],
+        agents_md: vec![],
+        setup: Default::default(),
     })
     .unwrap();
 

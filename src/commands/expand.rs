@@ -29,7 +29,7 @@ pub fn request(story: Option<String>, repo: String, reason: Option<String>) -> R
 /// Approve a pending request (by id or repo name): create the worktree, mark approved.
 pub fn approve(story: Option<String>, id_or_repo: String) -> Result<()> {
     let story = manifest::resolve_story(story)?;
-    let (repo_name, path, ws) = manifest::mutate(&story, |ws| {
+    let (repo_name, path) = manifest::mutate(&story, |ws| {
         let idx = ws
             .requests
             .iter()
@@ -53,8 +53,10 @@ pub fn approve(story: Option<String>, id_or_repo: String) -> Result<()> {
             .find(|r| r.name == repo_name)
             .map(|r| r.worktree.display().to_string())
             .unwrap_or_default();
-        Ok((repo_name, path, ws.clone()))
+        Ok((repo_name, path))
     })?;
+    super::refresh::refresh_story(&story)?;
+    let ws = manifest::load(&story)?;
     crate::vscode::write_workspace(&ws)?;
     let wired = ops::wire_env(&ws)?;
     if wired > 0 {

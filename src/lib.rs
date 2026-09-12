@@ -6,13 +6,16 @@
 
 pub mod cli;
 pub mod commands;
+pub mod composition;
 pub mod config;
 pub mod discovery;
 pub mod integrations;
+pub mod library;
 pub mod manifest;
 pub mod mcp;
 pub mod ops;
 pub mod picker;
+pub mod templates;
 pub mod util;
 pub mod vscode;
 pub mod worktree;

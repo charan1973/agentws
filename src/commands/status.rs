@@ -9,6 +9,10 @@ pub fn run(story: Option<String>) -> Result<()> {
     println!("workspace : {}", ws.story);
     println!("root      : {}", ws.root.display());
     println!("created   : {}", ws.created.format("%Y-%m-%d %H:%M"));
+    println!(
+        "template  : {}",
+        ws.setup.template.as_deref().unwrap_or("(none)")
+    );
     println!("repos:");
     for r in &ws.repos {
         let mark = if worktree::is_dirty(&r.worktree) {
@@ -22,6 +26,30 @@ pub fn run(story: Option<String>) -> Result<()> {
             branch = r.branch,
             dest = r.worktree.display()
         );
+    }
+    if !ws.skills.is_empty() {
+        println!("skills:");
+        for skill in &ws.skills {
+            let mode = if skill.copied { "copy" } else { "link" };
+            println!(
+                "  {:<24} {:<8} {:<4} -> {}",
+                skill.name,
+                skill.source,
+                mode,
+                skill.path.display()
+            );
+        }
+    }
+    if !ws.agents_md.is_empty() {
+        println!("agents-md:");
+        for snippet in &ws.agents_md {
+            println!(
+                "  {:<24} {:<8} -> {}",
+                snippet.name,
+                snippet.source,
+                snippet.path.display()
+            );
+        }
     }
     if !ws.requests.is_empty() {
         println!("requests:");

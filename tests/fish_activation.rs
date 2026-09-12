@@ -24,6 +24,9 @@ fn fish_activation_changes_and_restores_shell_state() {
         repos: vec![],
         requests: vec![],
         archived: false,
+        skills: vec![],
+        agents_md: vec![],
+        setup: Default::default(),
     })
     .unwrap();
 

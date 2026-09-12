@@ -82,7 +82,9 @@ impl<T: Pickable> PickerState<T> {
                 if self.filter.is_empty() {
                     return Some((0, it));
                 }
-                matcher.fuzzy_match(&it.label(), &self.filter).map(|s| (s, it))
+                matcher
+                    .fuzzy_match(&it.label(), &self.filter)
+                    .map(|s| (s, it))
             })
             .collect();
         if !self.filter.is_empty() {
@@ -134,15 +136,16 @@ impl<T: Pickable> PickerState<T> {
 /// Full-screen fuzzy multi-select over repos (used by `new`).
 /// Returns `None` if cancelled or empty.
 pub fn pick(items: Vec<Repo>) -> Result<Option<Vec<Repo>>> {
-    pick_generic(items, "repos", "Repos")
+    pick_items(items, "repos", "Repos")
 }
 
 /// Full-screen fuzzy multi-select over arbitrary strings (used by `delete`).
 pub fn pick_strings(items: Vec<String>) -> Result<Option<Vec<String>>> {
-    pick_generic(items, "workspaces", "Workspaces")
+    pick_items(items, "workspaces", "Workspaces")
 }
 
-fn pick_generic<T: Pickable + Clone>(
+/// Full-screen fuzzy multi-select for any item implementing [`Pickable`].
+pub fn pick_items<T: Pickable + Clone>(
     items: Vec<T>,
     noun_lower: &str,
     title: &str,
@@ -193,7 +196,11 @@ fn run<T: Pickable + Clone>(
             KeyCode::Esc => return Ok(None),
             KeyCode::Enter => {
                 let chosen = state.chosen();
-                return Ok(if chosen.is_empty() { None } else { Some(chosen) });
+                return Ok(if chosen.is_empty() {
+                    None
+                } else {
+                    Some(chosen)
+                });
             }
             KeyCode::Down | KeyCode::Char('j') => state.move_cursor(1),
             KeyCode::Up | KeyCode::Char('k') => state.move_cursor(-1),
@@ -211,12 +218,7 @@ fn run<T: Pickable + Clone>(
     }
 }
 
-fn ui<T: Pickable>(
-    frame: &mut Frame,
-    state: &mut PickerState<T>,
-    noun_lower: &str,
-    title: &str,
-) {
+fn ui<T: Pickable>(frame: &mut Frame, state: &mut PickerState<T>, noun_lower: &str, title: &str) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -266,11 +268,9 @@ fn ui<T: Pickable>(
     list_state.select(if count == 0 { None } else { Some(state.cursor) });
 
     let list = List::new(list_items)
-        .block(
-            Block::default().borders(Borders::ALL).title(format!(
-                "{title} ({count}) — ↑/↓ move · Space toggle · Enter confirm · Esc cancel"
-            )),
-        )
+        .block(Block::default().borders(Borders::ALL).title(format!(
+            "{title} ({count}) — ↑/↓ move · Space toggle · Enter confirm · Esc cancel"
+        )))
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
         .highlight_symbol("▶ ");
     frame.render_stateful_widget(list, chunks[1], &mut list_state);

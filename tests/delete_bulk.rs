@@ -87,7 +87,10 @@ fn bulk_delete_keeps_dirty_unless_force() -> Result<()> {
 
     // dry-run deletes nothing
     commands::delete::run(vec!["clean".into()], true, false, true)?;
-    assert!(ws_root("clean").exists(), "dry-run must not delete anything");
+    assert!(
+        ws_root("clean").exists(),
+        "dry-run must not delete anything"
+    );
 
     // bulk, no --force: clean deleted, dirty ones kept
     commands::delete::run(
@@ -96,14 +99,29 @@ fn bulk_delete_keeps_dirty_unless_force() -> Result<()> {
         false,
         true,
     )?;
-    assert!(!ws_root("clean").exists(), "clean workspace should be deleted");
-    assert!(ws_root("d1").exists(), "dirty d1 must be kept without --force");
-    assert!(ws_root("d2").exists(), "dirty d2 must be kept without --force");
+    assert!(
+        !ws_root("clean").exists(),
+        "clean workspace should be deleted"
+    );
+    assert!(
+        ws_root("d1").exists(),
+        "dirty d1 must be kept without --force"
+    );
+    assert!(
+        ws_root("d2").exists(),
+        "dirty d2 must be kept without --force"
+    );
 
     // bulk with --force: dirty ones now deleted
     commands::delete::run(vec!["d1".into(), "d2".into()], false, true, true)?;
-    assert!(!ws_root("d1").exists(), "dirty d1 should be deleted with --force");
-    assert!(!ws_root("d2").exists(), "dirty d2 should be deleted with --force");
+    assert!(
+        !ws_root("d1").exists(),
+        "dirty d1 should be deleted with --force"
+    );
+    assert!(
+        !ws_root("d2").exists(),
+        "dirty d2 should be deleted with --force"
+    );
 
     Ok(())
 }
