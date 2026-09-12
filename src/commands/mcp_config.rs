@@ -17,9 +17,9 @@ pub fn run(agent: &str) -> Result<()> {
              {{\n  \"mcp\": {{\n    \"agentws\": {{\n      \"type\": \"local\",\n      \"command\": [\"{bin}\", \"mcp\"]\n    }}\n  }}\n}}"
         ),
         "pi" => format!(
-            "# pi has no built-in MCP; add `agentws mcp` via a pi extension/package,\n\
-             # or use the CLI (`agentws request`, `agentws approve`) from another terminal.\n\
-             # server command: {bin} mcp"
+            "# Install the native project extension (repo tools + scope guard):\n\
+             agentws integrate pi\n\
+             # The generated extension invokes the agentws tool bridge via: {bin}"
         ),
         other => bail!(
             "unknown agent '{other}' (expected: claude, codex, opencode, pi)"

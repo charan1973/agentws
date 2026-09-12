@@ -48,7 +48,7 @@ We re-implement the (already-solved) worktree plumbing ourselves, which is
 deliberate: it's thin, and keeping it in-tree means the expansion protocol can
 touch every layer cleanly.
 
-### 3.2 Soft scope, not a hard sandbox
+### 3.2 Soft scope by default; hard sandbox is opt-in
 
 The agent is **not** locked in. We get scoping three ways:
 1. **Physical**: each story's repos live as worktrees *under one per-story
@@ -60,7 +60,9 @@ The agent is **not** locked in. We get scoping three ways:
    system prompts you.
 
 We skip FUSE / mount-namespaces / microVMs (macOS has no mount namespaces, and
-we explicitly don't want a hard restriction).
+we explicitly don't want a hard restriction in the normal flow). P3 adds
+`agentws sandbox` as a macOS-only Seatbelt escape hatch for commands that do need
+strict filesystem isolation; it is never enabled implicitly.
 
 ### 3.3 Conda-style activation (PIVOTED — supersedes the old launcher model)
 
@@ -76,18 +78,19 @@ problem**.
 - Old launcher (`agent.rs`, `launch` command, `agent` manifest field, `default_agent`)
   was **removed**.
 
-> ✅ **STATUS:** verified working in bash + zsh via `eval "$(agentws init-shell zsh)"`.
-> Fish is implemented but untested on this machine. See `HANDOFF.md` §4.
+> ✅ **STATUS:** verified in bash, zsh, and Fish. The Fish E2E covers persistent
+> activation/deactivation and one-shot command restoration.
 
-### 3.4 Hybrid expansion: MCP tool + CLI share one manifest *(deferred wiring)*
+### 3.4 Hybrid expansion: native/MCP tools + CLI share one manifest
 
-Two ways to add a repo mid-session, both writing the same `workspace.json`:
+Two ways to add a repo mid-session, both writing the same SQLite database:
 - **Agent-initiated** (MCP tool): agent calls `request_repo(name)`; supervisor/
   notification prompts you; on approval the worktree is created.
 - **Human-initiated** (CLI): you run `agentws add <repo>` directly.
 
-> The MCP server is implemented & E2E-tested but **not yet wired into agents**
-> (user said "leave the mcp for now").
+`agentws integrate` installs project-local Pi, Claude, and OpenCode integrations;
+Codex is registered through its supported user-level MCP CLI only when explicitly
+selected. `mcp-config` remains the manual-snippet alternative.
 
 ### 3.5 Branch naming: `feat/<story>` off each repo's default branch
 
@@ -126,48 +129,30 @@ L0  Workspace core      config, repo discovery+cache, fuzzy picker,
                          git worktree create, manifest, lifecycle commands
 L1  Activation           conda-style `activate`/`deactivate` shell function
                          (cd in + $AGENTWS_WORKSPACE); agents run natively
-    expansion (★)         + CLI (request/approve/deny/pending) +
+L2  expansion (★)         native/MCP tools + CLI (request/approve/deny/pending) +
                          macOS notifications (fired by the MCP tool)
 L3  Polish / seamless    tmux inline approval, SQLite manifest + history,
-                         pi extension (native request flow + scoped-grep guard),
-                         fish verification, symlink node_modules/.env, per-repo hooks
+                         agent integration + pi-native tools/scope guard,
+                         cross-repo env wiring, Fish verification, optional Seatbelt
 ```
 
 ★ = the differentiator.
 
-## 6. Data model — `~/.agentws/<story>/workspace.json`
+## 6. Data model — `~/.agentws/<story>/workspace.db`
 
-```jsonc
-{
-  "story": "auth-payments",
-  "root": "/Users/charanv/.agentws/auth-payments",
-  "created": "2026-06-26T12:00:00Z",
-  "repos": [
-    {
-      "name": "api",
-      "origin": "/Users/charanv/work/api",
-      "worktree": "/Users/charanv/.agentws/auth-payments/api",
-      "branch": "feat/auth-payments",
-      "base": "main"
-    }
-  ],
-  "requests": [
-    {
-      "id": "ab12",
-      "repo": "payments-service",
-      "reason": "need to update the payment client",
-      "status": "approved",            // pending | approved | denied
-      "by": "agent",                   // agent | human
-      "created": "2026-06-26T12:00:00Z",
-      "resolved": "2026-06-26T12:01:30Z"
-    }
-  ],
-  "archived": false
-}
-```
-No `agent` field (that was removed in the activation pivot). v1: JSON + `flock` for
-concurrent writers (MCP server, CLI). P3: SQLite. Old manifests written with an
-`agent` field still load — serde ignores unknown fields (covered by a test).
+SQLite/WAL is authoritative. The schema separates current state from audit data:
+
+- `workspace`: singleton story/root/created/archive metadata + schema version
+- `repos`: current worktree membership and branch/base information
+- `requests`: current request state (`pending` / `approved` / `denied`)
+- `request_events`: append-only request creation and status transitions, including
+  actor, timestamp, repo, and reason
+
+All read-modify-write operations use `BEGIN IMMEDIATE` with a busy timeout, so
+concurrent CLI, watcher, Pi, and MCP writers cannot silently lose updates. A
+concurrency E2E exercises eight simultaneous writers. Existing `workspace.json`
+manifests migrate automatically on first access and remain untouched as a backup;
+unknown legacy fields such as the removed `agent` field are still accepted.
 
 ## 7. Hybrid expansion protocol (the differentiator)
 
@@ -195,9 +180,11 @@ supervisor pane would return.
 CLI side is symmetric: `agentws add payments-service` (human-initiated, no prompt)
 writes straight to `approved`. Both paths share one manifest writer.
 
-**P3 upgrade:** run the agent in a `tmux` pane (claude-squad/wtmux style) so the
-supervisor can prompt inline in another pane — seamless y/n without a second
-terminal.
+**P3 upgrade (implemented):** `agentws approvals --tmux` opens a persistent
+approval watcher in a small tmux pane without launching or owning the agent. The
+current pane remains active; when a request arrives, the watcher rings the bell,
+focuses its pane, and prompts for approve/deny/skip. `agentws approvals` provides
+the same live prompt in the current terminal.
 
 ## 8. Command surface
 
@@ -212,12 +199,15 @@ agentws delete <story> [--yes]                # remove worktrees + manifest
 # expansion (human)
 agentws add <repo> [--story s] [--base b]     # add a repo now
 agentws remove <repo> [--story s]
+agentws rewire [--story s]                    # refresh managed dotenv values
 agentws archive <story> | restore <story>
 
 # expansion (permission-gated)
 agentws request <repo> [--reason] [--story s]
 agentws pending
+agentws history [--story s]                   # append-only request audit trail
 agentws approve <id|repo> [--story s] | deny <id|repo> [--story s]
+agentws approvals [--story s] [--tmux]        # live inline approval watcher
 
 # conda-style activation (sourced shell function, NOT a binary subcommand)
 #   eval "$(agentws init-shell zsh)"; then:
@@ -227,6 +217,8 @@ agentws deactivate
 # integration / introspection
 agentws mcp                                   # run the MCP server (stdio)
 agentws mcp-config <agent>                    # print MCP wiring snippet
+agentws integrate <agent...> [--force]        # pi/claude/codex/opencode/all
+agentws sandbox [flags] -- <command...>       # macOS hard-isolation escape hatch
 agentws completions <shell>                   # generate shell completions
 agentws init-shell [shell]                    # print activate/deactivate function
 agentws config                                # show resolved config + key paths
@@ -242,7 +234,7 @@ agentws _list-stories                         # (hidden) story names for complet
 - [x] Repo discovery + skip-list over configured roots
 - [x] `ratatui` fuzzy multi-select picker (`fuzzy-matcher`)
 - [x] `git worktree add`/`remove`, default-branch detection, idempotent reuse
-- [x] Manifest (`workspace.json`) read/write + `flock`
+- [x] Initial manifest (`workspace.json`) read/write + `flock` (superseded by P3 SQLite)
 - [x] `new` / `list` / `status` / `open` / `delete`
 - [x] `AGENTS.md` scope stub injected at workspace root
 - [x] End-to-end smoke test (`new`/`list`/`status`/`open`/`delete` verified)
@@ -265,20 +257,20 @@ agentws _list-stories                         # (hidden) story names for complet
 
 ### Activation pivot + tests *(done)*
 - [x] **Ripped out agent-launching** (deleted `agent.rs`/`launch.rs`, `--agent`/`--no-launch`, `default_agent`, `agent` manifest field). agentws never spawns agents.
-- [x] **Conda-style `activate`/`deactivate`** — sourced shell function via `init-shell` (bash+zsh verified, fish implemented). `activate <story> [cmd]` does cd+env or one-shot passthrough.
+- [x] **Conda-style `activate`/`deactivate`** — sourced shell function via `init-shell` (bash, zsh, and Fish verified). `activate <story> [cmd]` does cd+env or one-shot passthrough.
 - [x] `$AGENTWS_WORKSPACE` added to `resolve_story` (priority #2); per-shell scoping, like `conda activate`.
 - [x] Hidden `_list-stories` subcommand to feed shell completion.
-- [x] **Test suite**: 20 unit tests (util/config/ops/discovery/worktree/manifest) + 1 integration test (`resolve_story` priority chain, its own process so HOME/env mutation is safe). `cargo test` green.
+- [x] **Test suite**: 37 unit tests + 8 integration tests. `cargo test --all-targets` and strict Clippy are green.
 - [x] Doc cleanup (PLAN.md, README.md, HANDOFF.md).
 
-### P3 — Seamless + pi-native *(deferred)*
-- [ ] tmux inline approval (agent in one pane, prompt in another)
-- [ ] SQLite manifest + request history (JSON+flock is fine for v1)
-- [ ] `agentws` **pi extension** (pi has no built-in MCP; MCP server covers claude/codex/opencode; pi needs the extension for native integration)
-- [ ] **MCP wiring into agents** (server works + is E2E-tested, but not added to any agent config yet)
-- [ ] env-file cross-repo wiring (multree-style)
-- [ ] verify **fish** activation (implemented in `init-shell`, untested — no fish on dev host)
-- [ ] optional hard-sandbox escape hatch
+### P3 — Seamless + pi-native *(done)*
+- [x] tmux inline approval (`agentws approvals --tmux`; persistent watcher pane, auto-focus + bell, approve/deny/skip prompt; E2E-tested with an isolated tmux server)
+- [x] SQLite/WAL manifest + append-only request history; legacy JSON auto-migration and concurrent-writer E2E
+- [x] `agentws` **Pi extension** with native repo tools and an out-of-workspace path guard; load-tested in installed Pi
+- [x] **Agent wiring** via `agentws integrate`: project-local Pi/Claude/OpenCode plus explicit Codex CLI registration
+- [x] env-file cross-repo wiring (expose/consume/default templates, managed blocks, automatic lifecycle refresh + `rewire`)
+- [x] verify **Fish** activation in real Fish 4.9.3 (persistent and one-shot flows)
+- [x] optional macOS hard-sandbox escape hatch (network opt-in, private temp, outside read/write denial E2E)
 
 > Note: `resume`/reattach is **solved by design** — agents key sessions by cwd,
 > so `pi -c` / `/resume` from inside an activated workspace just works. Removed
@@ -299,23 +291,26 @@ agentws/
 │   ├── lib.rs           # pub modules (unit + integration tests target this)
 │   ├── main.rs          # thin binary: SIGPIPE reset → cli::run()
 │   ├── cli.rs           # clap command definitions + dispatch
-│   ├── config.rs        # load/parse config.toml (roots, symlinks, hooks, paths)
+│   ├── config.rs        # config.toml (roots, symlinks, hooks, env wiring)
 │   ├── discovery.rs     # find repos under roots
-│   ├── manifest.rs      # workspace.json + flock + resolve_story chain + .current
+│   ├── manifest.rs      # SQLite/WAL state + history + JSON migration + resolution
 │   ├── worktree.rs      # git worktree add/remove, default-branch, dirty check
-│   ├── ops.rs           # shared: add/remove repo, symlinks, hooks, request ids
+│   ├── ops.rs           # repo ops, symlinks/hooks, env wiring, request ids
 │   ├── picker.rs        # ratatui fuzzy multi-select
-│   ├── mcp.rs           # MCP stdio server (3 tools) — dormant, works
+│   ├── mcp.rs           # MCP stdio server + direct Pi tool bridge
+│   ├── integrations.rs  # Pi extension + Claude/Codex/OpenCode installers
 │   ├── util.rs          # tilde expansion
 │   └── commands/
 │       ├── new list status open delete use_ws
 │       ├── add remove expand lifecycle
-│       ├── config discover              # introspection
-│       ├── mcp_config completions
+│       ├── approvals env integrate sandbox
+│       ├── config discover mcp_config completions
 │       ├── init_shell                   # conda-style activate/deactivate function
 │       └── mod.rs
 └── tests/
-    └── resolve_priority.rs             # resolve_story priority-chain (own process)
+    ├── approvals_tmux.rs delete_bulk.rs resolve_priority.rs
+    ├── fish_activation.rs manifest_concurrency.rs
+    └── sandbox_macos.rs
 ```
 
 ## 11. Dependencies
@@ -325,16 +320,16 @@ agentws/
 | clap           | CLI parsing (derive)                  |
 | clap_complete  | shell completion generation           |
 | serde          | (de)serialize                         |
-| serde_json     | manifest                              |
+| serde_json     | MCP, integrations, legacy migration   |
 | toml           | config file                           |
 | anyhow         | error handling                        |
 | directories    | XDG/home paths                        |
 | ratatui        | picker TUI                            |
 | crossterm      | terminal I/O for picker               |
 | fuzzy-matcher  | fuzzy filter in picker                |
-| fs2            | file locking for manifest             |
 | chrono         | timestamps in manifest/requests       |
 | libc           | SIGPIPE reset (unix)                  |
+| rusqlite       | SQLite manifest + request history      |
 | tempfile (dev) | unit + integration tests              |
 
 ## 12. Planned (P4): skills/AGENTS.md picker, per-repo honoring, templates

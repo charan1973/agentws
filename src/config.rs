@@ -1,6 +1,7 @@
 use crate::util::expand_tilde;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -55,6 +56,41 @@ pub struct Config {
     /// (e.g. "npm ci"). Defaults to none.
     #[serde(default)]
     pub post_create: Option<String>,
+
+    /// Per-repository dotenv exposure/consumption rules for cross-repo wiring.
+    #[serde(default)]
+    pub env: BTreeMap<String, RepoEnv>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RepoEnv {
+    /// Dotenv file, relative to the repository worktree.
+    #[serde(default = "default_env_file")]
+    pub file: PathBuf,
+    /// Template name -> dotenv key exported by this repository.
+    #[serde(default)]
+    pub exposes: BTreeMap<String, String>,
+    /// Dotenv key -> template containing `{repo.name}` references.
+    #[serde(default)]
+    pub consumes: BTreeMap<String, String>,
+    /// Fallback values keyed by placeholder name when a producer is absent.
+    #[serde(default)]
+    pub defaults: BTreeMap<String, String>,
+}
+
+impl Default for RepoEnv {
+    fn default() -> Self {
+        Self {
+            file: default_env_file(),
+            exposes: BTreeMap::new(),
+            consumes: BTreeMap::new(),
+            defaults: BTreeMap::new(),
+        }
+    }
+}
+
+fn default_env_file() -> PathBuf {
+    PathBuf::from(".env")
 }
 
 impl Config {
@@ -97,6 +133,16 @@ repo_roots = ["~/work"]
 
 # Shell command run inside each worktree right after creation.
 # post_create = "npm ci"
+
+# Optional cross-repo env wiring. Example:
+# [env.api]
+# file = ".env.local"
+# exposes = { port = "PORT" }
+#
+# [env.web]
+# file = ".env.local"
+# consumes = { API_URL = "http://localhost:{api.port}" }
+# defaults = { "api.port" = "5000" }
 "#;
         fs::write(&path, example)?;
     }
@@ -130,9 +176,13 @@ default_base = "develop"
         assert_eq!(cfg.repo_roots.len(), 2);
         // tilde stays literal here; expansion only happens in repo_roots_expanded()
         assert_eq!(cfg.repo_roots[0], std::path::PathBuf::from("~/work"));
-        assert_eq!(cfg.symlinks, vec!["node_modules".to_string(), ".env*".to_string()]);
+        assert_eq!(
+            cfg.symlinks,
+            vec!["node_modules".to_string(), ".env*".to_string()]
+        );
         assert_eq!(cfg.post_create.as_deref(), Some("npm ci"));
         assert_eq!(cfg.default_base.as_deref(), Some("develop"));
+        assert!(cfg.env.is_empty());
     }
 
     #[test]
@@ -144,9 +194,35 @@ default_base = "develop"
 
     #[test]
     fn repo_roots_expanded_resolves_tilde() {
-        let Some(home) = home_dir() else { return; };
+        let Some(home) = home_dir() else {
+            return;
+        };
         let cfg = parse("repo_roots = [\"~/work\"]\n").unwrap();
         let expanded = cfg.repo_roots_expanded();
         assert_eq!(expanded, vec![home.join("work")]);
+    }
+
+    #[test]
+    fn parse_cross_repo_env_wiring() {
+        let cfg = parse(
+            r#"
+[env.api]
+file = ".env.local"
+exposes = { port = "PORT" }
+
+[env.web]
+consumes = { API_URL = "http://localhost:{api.port}" }
+defaults = { "api.port" = "5000" }
+"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.env["api"].file, PathBuf::from(".env.local"));
+        assert_eq!(cfg.env["api"].exposes["port"], "PORT");
+        assert_eq!(
+            cfg.env["web"].consumes["API_URL"],
+            "http://localhost:{api.port}"
+        );
+        assert_eq!(cfg.env["web"].defaults["api.port"], "5000");
+        assert_eq!(cfg.env["web"].file, PathBuf::from(".env"));
     }
 }

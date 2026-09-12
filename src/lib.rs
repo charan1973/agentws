@@ -8,6 +8,7 @@ pub mod cli;
 pub mod commands;
 pub mod config;
 pub mod discovery;
+pub mod integrations;
 pub mod manifest;
 pub mod mcp;
 pub mod ops;

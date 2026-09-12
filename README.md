@@ -33,7 +33,7 @@ mkdir -p ~/.config/agentws
 printf 'repo_roots = ["~/work"]\n' > ~/.config/agentws/config.toml
 
 # 3. add shell integration (one-time per shell)
-eval "$(agentws init-shell zsh)"   # or bash / fish
+eval "$(agentws init-shell zsh)"   # zsh or bash; fish is shown below
 
 # 4. create a workspace
 agentws new auth-payments --repos svc-auth,svc-api
@@ -103,6 +103,7 @@ Once activated (or when run from inside a workspace), these resolve the target w
 ```bash
 agentws add <repo> [--story story]                   # add another repo now
 agentws remove <repo> [--story story]                # drop a repo from the workspace
+agentws rewire [--story story]                       # refresh cross-repo dotenv values
 agentws archive <story>                              # remove worktrees, keep manifest
 agentws restore <story>                              # recreate worktrees from manifest
 agentws code [--story story]                          # open in VS Code (multi-root)
@@ -133,8 +134,11 @@ agentws deactivate                  # restore cwd + unset env
 ```bash
 agentws request <repo> [--story story] [--reason ...] # queue a request
 agentws pending                                       # show pending requests
+agentws history                                       # append-only request audit trail
 agentws approve <id-or-repo> [--story story]          # create worktree + mark approved
 agentws deny <id-or-repo> [--story story]             # mark denied
+agentws approvals [--story story]                     # watch + resolve requests interactively
+agentws approvals --tmux [--story story]              # open watcher in a tmux pane
 ```
 
 ### Integration
@@ -142,11 +146,32 @@ agentws deny <id-or-repo> [--story story]             # mark denied
 ```bash
 agentws mcp                                            # run the MCP server (stdio)
 agentws mcp-config claude                              # print MCP wiring snippet
+agentws integrate pi claude opencode                  # install project-local integrations
+agentws integrate codex                               # install Codex MCP entry (user-global)
 agentws completions zsh                                # generate shell completions
 agentws init-shell zsh                                 # print activate/deactivate function
 agentws config                                         # show resolved config + key paths
 agentws discover                                       # list discovered repos
 ```
+
+`integrate` preserves unrelated settings and refuses to replace a conflicting
+`agentws` entry unless `--force` is supplied. Pi gets a native project extension;
+Claude and OpenCode get project-local MCP configuration. Codex's supported MCP
+CLI writes its user-level configuration, so it is only changed when `codex` is
+explicitly selected.
+
+For strict, opt-in filesystem isolation on macOS:
+
+```bash
+agentws sandbox -- pi                    # workspace + Git metadata only; network denied
+agentws sandbox --allow-network -- pi    # opt network access back in
+agentws sandbox --allow-read ~/docs -- command args...
+```
+
+The sandbox creates a private temporary directory and denies reads and writes
+outside the workspace, required Git metadata, system runtime paths, and any
+explicit `--allow-read`/`--allow-write` paths. It uses Apple's deprecated
+`sandbox-exec`, so it is an escape hatch rather than the default scoping model.
 
 ---
 
@@ -167,7 +192,23 @@ repo_roots = ["~/work"]
 
 # Shell command run inside each worktree right after creation.
 # post_create = "npm ci"
+
+# Optional cross-repo dotenv wiring. `api` exposes PORT as `api.port`;
+# `web` consumes it and falls back to 5000 when api is not in the workspace.
+[env.api]
+file = ".env.local"
+exposes = { port = "PORT" }
+
+[env.web]
+file = ".env.local"
+consumes = { API_URL = "http://localhost:{api.port}" }
+defaults = { "api.port" = "5000" }
 ```
+
+Managed values are kept in a clearly marked block, preserving the rest of the
+dotenv file. Wiring runs after workspace membership changes and can be refreshed
+manually with `agentws rewire`. Env paths must stay inside their repo and may not
+traverse symlinks.
 
 ---
 
@@ -182,14 +223,35 @@ Two ways to add a repo:
 
 When the agent calls `request_repo`, `agentws` writes a pending request to the manifest and fires a notification. The human runs `agentws approve <id>` in any terminal. On approval, a worktree is created **under the workspace root**, so it appears in-scope to the running agent with no restart.
 
-To wire the MCP server into an agent:
+For inline approval while using tmux, start a watcher before launching the agent:
 
 ```bash
-agentws mcp-config claude   # prints the snippet for ~/.claude.json
-agentws mcp-config codex    # prints the snippet for ~/.codex/config.toml
+agentws activate auth-payments
+agentws approvals --tmux   # opens a small watcher pane; current pane stays active
+pi
 ```
 
-For `pi`, there is no built-in MCP; use the CLI commands directly or build a pi extension.
+The watcher focuses its pane and rings the terminal bell when a request arrives,
+then accepts `a`/`y` to approve, `d`/`n` to deny, `s` to skip it for the current
+watcher session, or `q` to close the watcher. Without tmux, run
+`agentws approvals` in another terminal for the same live prompt.
+
+To wire the native/MCP tools into an agent for the active workspace:
+
+```bash
+agentws integrate pi               # .pi/extensions/agentws.ts
+agentws integrate claude opencode  # .mcp.json + opencode.json
+agentws integrate codex            # Codex user-level MCP registration
+```
+
+Pi's generated extension registers the three repo tools natively and prompts
+before path-based file tools leave the workspace. The other harnesses use the
+stdio MCP server. `agentws mcp-config <agent>` remains available when you prefer
+to copy a snippet manually.
+
+Workspace state is authoritative in `workspace.db` (SQLite/WAL). Existing
+`workspace.json` manifests migrate automatically on first access and are kept as
+a backup. `agentws history` reads the append-only request event log.
 
 ---
 
@@ -206,16 +268,16 @@ For `pi`, there is no built-in MCP; use the CLI commands directly or build a pi 
 
 ```bash
 cargo build                      # build
-cargo test                       # run unit + integration tests (21 tests)
-cargo clippy --all-targets       # lint
+cargo test                       # run unit + integration tests (45 tests)
+cargo clippy --all-targets -- -D warnings
 cargo install --path . --locked  # install to ~/.cargo/bin/agentws
 ```
 
 The crate exposes both a binary (`src/main.rs`) and a library (`src/lib.rs`), so
 the modules are testable: in-module unit tests (`#[cfg(test)]`) cover the pure
-functions and the git/worktree/discovery/manifest logic, and an integration test
-under `tests/` (`resolve_priority.rs`) runs in its **own process** so it can
-mutate `HOME` / `$AGENTWS_WORKSPACE` / cwd without racing other tests.
+functions and the git/worktree/discovery/manifest logic. The test suite covers
+story resolution, bulk deletion, concurrent SQLite writers, tmux approval, real
+Fish activation, Pi extension loading, and macOS Seatbelt isolation.
 
 ---
 

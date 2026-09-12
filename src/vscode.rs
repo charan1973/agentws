@@ -6,7 +6,7 @@
 //! Source Control entry per worktree — so each worktree can be diffed against
 //! `main` on its own, in the GUI.
 //!
-//! The file is **derived state**: the manifest (`workspace.json`) is the source
+//! The file is **derived state**: the manifest (`workspace.db`) is the source
 //! of truth, and this file is regenerated whenever the set of repos changes
 //! (`new` / `add` / `remove` / `restore`) and deleted on `archive`. `agentws code`
 //! regenerates it on demand if missing, so a bare `agentws code` always opens a

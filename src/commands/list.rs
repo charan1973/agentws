@@ -8,7 +8,7 @@ pub fn run() -> Result<()> {
         return Ok(());
     }
     let active = manifest::get_current().unwrap_or(None);
-    println!("{:<2} {:<22} {:>10}  {}", "", "WORKSPACE", "REPOS", "ROOT");
+    println!("{:<2} {:<22} {:>10}  ROOT", "", "WORKSPACE", "REPOS");
     for s in stories {
         let mark = if active.as_deref() == Some(s.as_str()) { "*" } else { " " };
         let ws = manifest::load(&s).ok();

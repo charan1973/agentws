@@ -110,12 +110,7 @@ fn call_tool(msg: &Value) -> Result<Value> {
         .ok_or_else(|| anyhow::anyhow!("missing tool name"))?;
     let args = params.get("arguments").cloned().unwrap_or(json!({}));
 
-    let result: Result<String> = match name {
-        "list_available_repos" => list_available_repos(&args),
-        "request_repo" => request_repo(&args),
-        "check_request" => check_request(&args),
-        other => Err(anyhow::anyhow!("unknown tool '{other}'")),
-    };
+    let result = invoke(name, &args);
 
     Ok(match result {
         Ok(text) => json!({ "content": [ { "type": "text", "text": text } ] }),
@@ -126,6 +121,17 @@ fn call_tool(msg: &Value) -> Result<Value> {
     })
 }
 
+/// Invoke one agent-facing tool without the JSON-RPC envelope. This powers the
+/// project-local pi extension, whose extension API does not provide MCP.
+pub fn invoke(name: &str, args: &Value) -> Result<String> {
+    match name {
+        "list_available_repos" => list_available_repos(args),
+        "request_repo" => request_repo(args),
+        "check_request" => check_request(args),
+        other => Err(anyhow::anyhow!("unknown tool '{other}'")),
+    }
+}
+
 fn current_workspace() -> Result<manifest::Workspace> {
     let story = manifest::resolve_story(None)?;
     manifest::load(&story)
@@ -133,8 +139,7 @@ fn current_workspace() -> Result<manifest::Workspace> {
 
 fn list_available_repos(args: &Value) -> Result<String> {
     let ws = current_workspace()?;
-    let have: std::collections::HashSet<String> =
-        ws.repos.iter().map(|r| r.name.clone()).collect();
+    let have: std::collections::HashSet<String> = ws.repos.iter().map(|r| r.name.clone()).collect();
 
     let cfg = config::load()?;
     let mut repos: Vec<_> = discovery::discover(&cfg.repo_roots_expanded())
@@ -170,33 +175,37 @@ fn request_repo(args: &Value) -> Result<String> {
         .get("name")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("missing 'name'"))?;
-    let reason = args.get("reason").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let reason = args
+        .get("reason")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
 
-    let mut ws = current_workspace()?;
-    if ws.repos.iter().any(|r| r.name == name) {
-        return Ok(format!("'{name}' is already in this workspace at ./{}", name));
-    }
-    // Validate it exists, but don't create it yet.
-    ops::find_repo(name)?;
-
+    let story = manifest::resolve_story(None)?;
     let id = ops::new_id();
-    let req = manifest::RepoRequest {
-        id: id.clone(),
-        repo: name.to_string(),
-        reason: reason.clone(),
-        status: "pending".into(),
-        by: "agent".into(),
-        created: chrono::Utc::now(),
-        resolved: None,
-    };
-    ws.requests.push(req);
-    manifest::save(&ws)?;
+    let already_present = manifest::mutate(&story, |ws| {
+        if ws.repos.iter().any(|r| r.name == name) {
+            return Ok(true);
+        }
+        // Validate it exists, but don't create it yet.
+        ops::find_repo(name)?;
+        ws.requests.push(manifest::RepoRequest {
+            id: id.clone(),
+            repo: name.to_string(),
+            reason: reason.clone(),
+            status: "pending".into(),
+            by: "agent".into(),
+            created: chrono::Utc::now(),
+            resolved: None,
+        });
+        Ok(false)
+    })?;
+    if already_present {
+        return Ok(format!("'{name}' is already in this workspace at ./{name}"));
+    }
 
     notify(
         "agentws",
-        &format!(
-            "Agent requests '{name}'. Approve: agentws approve {id}",
-        ),
+        &format!("Agent requests '{name}'. Approve: agentws approve {id}",),
     );
 
     Ok(format!(
@@ -249,8 +258,7 @@ fn notify(title: &str, body: &str) {
     let b = clean(body);
     #[cfg(target_os = "macos")]
     {
-        let script =
-            format!("display notification \"{b}\" with title \"{t}\"");
+        let script = format!("display notification \"{b}\" with title \"{t}\"");
         let _ = std::process::Command::new("osascript")
             .arg("-e")
             .arg(&script)

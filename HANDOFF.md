@@ -1,209 +1,190 @@
 # agentws — Handoff / Status
 
-**Date:** 2026-06-29 (updated)
-**State:** Conda-style activation **complete & verified** (bash + zsh); `config`/`discover` commands added; **21 tests green**. Build clean. Installed at `~/.cargo/bin/agentws`.
+**Date:** 2026-09-12
+**State:** P0-P3 complete. **45 tests green; strict Clippy green.**
 
-> Read this first, then `PLAN.md`. This file is the source of truth for where
-> things stand right now.
+> Read this first, then `PLAN.md`. This is the current implementation handoff.
 
 ---
 
 ## TL;DR
 
-- The project **pivoted architecture**: the old "agentws launches the agent" model
-  was ripped out and replaced with a **conda/venv-style activation model** (workspace
-  owns the dir; you `activate` then run any agent natively).
-- **Build compiles clean.** Installed at `~/.cargo/bin/agentws`.
-- **`activate`/`deactivate` WORKS** — verified in bash + zsh (full flow: activate →
-  cwd+env set, `status` resolves via env, passthrough, deactivate restores,
-  per-shell isolation). See §4 for the earlier "blocker" — it was a **test
-  artifact, not a code bug**.
-- 7 commits on `main`; latest adds `config`/`discover`, a `lib.rs` test surface, and a 21-test suite.
-- The explicitly-deferred P3 items (MCP wiring into agents, pi extension, tmux inline approval, SQLite manifest, fish verification, hard sandbox) remain deferred — see PLAN.md §9.
+- agentws owns per-story workspaces, not agent processes. Source the shell
+  integration, activate a story, then run Pi/Claude/Codex/OpenCode natively.
+- Workspace state now lives in SQLite/WAL (`workspace.db`) with serialized
+  writers and an append-only repo-request event log.
+- P3 is complete: tmux approvals, Pi-native tools, MCP integration installers,
+  cross-repo dotenv wiring, verified Fish activation, and an opt-in macOS hard
+  sandbox.
+- The verified P3 release binary is installed at `~/.cargo/bin/agentws`.
+- The working tree contains all P3 work and is intentionally uncommitted. Do not
+  commit until the human gives the go-ahead.
 
 ---
 
-## 1. What agentws is
+## 1. Architecture
 
-A Rust CLI that creates per-story workspaces for AI coding agents (pi/claude/codex/
-opencode) across a polyrepo/microservice codebase. Each story = a fresh directory
-`~/.agentws/<story>/` containing `git worktree`s of only the repos that story
-touches, so the agent is scoped by default (no token waste / context pollution from
-grepping the whole `work/` tree). Mid-session, an agent can *request* another repo
-and a human approves it.
+Each story is `~/.agentws/<story>/` with selected repositories mounted as Git
+worktrees beneath that root. The sourced `agentws activate` function changes the
+current shell's cwd and sets `AGENTWS_WORKSPACE`; it never launches or owns an
+agent. Native resume/session behavior therefore remains with each harness.
 
----
+Workspace resolution is:
 
-## 2. The architecture pivot
-
-### Old model (REMOVED)
-agentws *owned* the agent process: it spawned the agent (`agent::launch`), tracked
-an `agent.kind`/`pid` in the manifest, and tried to manage resume. This duplicated
-the agent, blocked its native features, and made resume a per-agent nightmare.
-
-### New model (conda/venv style — DONE)
-agentws owns only the **workspace** (worktrees + dir). You **activate** it — a
-sourced shell function that `cd`s you in and `export`s `AGENTWS_WORKSPACE` — then
-you run `pi`/`claude`/`codex` yourself. agentws **never spawns an agent** (pure
-passthrough). Because the agent runs natively with `cwd = ~/.agentws/<story>`, the
-agent's own resume (`pi -c`, `pi -r`, `/resume`) works for free, keyed by dir.
-**Resume is no longer our problem.**
-
-`AGENTWS_WORKSPACE` is **per-shell** (set by the sourced function, not globally) —
-exactly like `conda activate`. Two terminals = two independent values.
-
-### What got removed
-- `src/agent.rs` (deleted)
-- `src/commands/launch.rs` (deleted)
-- `Launch` CLI command (removed)
-- `--agent` / `--no-launch` flags on `New` (removed)
-- `default_agent` config field (removed)
-- `agent` / `AgentRef` fields on the manifest (removed; `#[serde(default)]` keeps
-  old manifests loadable)
-
-### What got added
-- `init-shell` emits a conda-style `agentws` shell function (`activate`/
-  `deactivate`/delegate), for bash/zsh/fish. **Verified in bash + zsh.**
-- `AGENTWS_WORKSPACE` added to the top of `resolve_story`'s fallback chain.
-- Hidden `_list-stories` subcommand to feed shell completion of `activate`.
-- `new` now just creates the workspace + prints the activate hint (no launch).
-
-### Resolution chain for "which workspace?" (priority order)
-1. `--story <name>` flag (explicit)
-2. **`$AGENTWS_WORKSPACE`** (per-shell; set by `activate`)
-3. cwd is inside a workspace dir
-4. `~/.agentws/.current` (global fallback pointer)
-5. exactly one workspace exists → use it
-6. else: helpful error listing workspaces
+1. explicit `--story`
+2. `$AGENTWS_WORKSPACE`
+3. cwd beneath `~/.agentws/<story>`
+4. `~/.agentws/.current`
+5. the only existing workspace
+6. otherwise, a helpful error
 
 ---
 
-## 3. What works (verified)
+## 2. P3 capabilities
 
-- **Workspace core (P0):** `new` (fuzzy picker or `--repos`), `list`, `status`,
-  `open`, `delete`. Worktrees on `feat/<story>` branches, manifest (`workspace.json`
-  + flock), `AGENTS.md` scope stub. End-to-end tested.
-- **Expansion (P1+P2):** `add`/`remove` (human), `request`/`approve`/`deny`/
-  `pending` (permission-gated), `archive`/`restore`. The MCP stdio server
-  (`agentws mcp`: `list_available_repos`/`request_repo`/`check_request`) is
-  **implemented and E2E-tested** over real JSON-RPC. (User deferred wiring it into
-  agents, so it's dormant but functional.)
-- **Run from any dir:** the full `--story`/env/cwd/`.current`/single-workspace chain (6 steps), **unit + integration tested**. SIGPIPE handled.
-- **Introspection:** `agentws config` (resolved config + paths), `agentws discover` (list repos under roots).
-  SIGPIPE handled.
-- **Test suite (NEW):** `cargo test` = 21 green. 20 unit tests (util/config/ops/discovery/worktree/manifest) + 1 integration test (`resolve_story` priority chain, own process). Crate split into `lib.rs` + `main.rs` to enable this.
-  - `eval "$(agentws init-shell zsh)"` defines the function.
-  - `agentws activate <story>` → `cd` in + `export AGENTWS_WORKSPACE`.
-  - `agentws activate <story> <cmd>` → one-shot passthrough (runs, returns).
-  - `agentws deactivate` → restores cwd, unsets env.
-  - commands like `agentws add`/`status` resolve the workspace via the env var
-    (no `--story` needed) while activated.
-  - per-shell isolation (two shells, two workspaces).
-  - `agentws activate nope` → clean error, rc=1.
+### SQLite manifest and request history
 
-## 4. The earlier "blocker" — RESOLVED (was a test artifact) ✅
+- `workspace.db` has `workspace`, `repos`, `requests`, and append-only
+  `request_events` tables.
+- WAL, a five-second busy timeout, and `BEGIN IMMEDIATE` protect concurrent
+  CLI/watcher/MCP writes from lost updates.
+- `agentws history [--story ...]` prints request creation and status transitions.
+- Existing `workspace.json` files migrate on first access and are preserved as a
+  backup. Legacy unknown fields still deserialize.
+- An E2E starts eight simultaneous writers and verifies every request and event.
 
-**Symptom seen last session:** `activate`/`deactivate` didn't work — `type agentws`
-still showed the binary, and calls errored `unrecognized subcommand 'activate'`.
+### Inline approval
 
-**Root cause:** NOT a code bug. The test invoked
-`source <(agentws init-shell bash)` (**process substitution**). In bash, sourcing a
-function definition from a FIFO (proc-sub) does **not** reliably define the
-function — `type -t agentws` returned `file`, not `function`.
+- `agentws approvals` watches and resolves requests in the current terminal.
+- `agentws approvals --tmux` creates a dedicated ten-line pane, returns focus to
+  the current pane, and focuses/rings the watcher when a request arrives.
+- The isolated tmux E2E creates a request, approves it through the pane, and
+  verifies the SQLite status transition.
 
-**The fix was already the documented usage:** use the idiomatic `eval` form, which
-is what the README recommends and what conda/starship/pyenv use:
+### Agent integration
 
-| Form | Result |
-|------|--------|
-| `eval "$(agentws init-shell bash)"` (README form) | ✅ function defined, full flow works |
-| `source <(agentws init-shell bash)` (proc-sub) | ❌ bash FIFO quirk — function not defined |
-| `source /tmp/file` | ✅ works |
+`agentws integrate <agent...> [--story ...] [--force]` supports `pi`, `claude`,
+`codex`, `opencode`, and `all`:
 
-The emitted shell code is correct: `bash -n` passes, `source <file>` defines the
-function, and `eval "$(...)"` works perfectly in both bash and zsh.
+- Pi: writes `.pi/extensions/agentws.ts` with native
+  `list_available_repos`, `request_repo`, and `check_request` tools plus a prompt
+  for path-based file operations outside the workspace.
+- Claude: merges `mcpServers.agentws` into project `.mcp.json`.
+- OpenCode: merges `mcp.agentws` into project `opencode.json`.
+- Codex: calls `codex mcp add agentws -- <absolute-agentws> mcp`; this is a
+  user-level change and only happens when Codex is explicitly selected.
 
-**One real fix made during verification:** zsh printed `command not found: compdef`
-in a non-interactive shell, because `compdef` only exists after `compinit` runs.
-Guarded the `compdef _agentws agentws` call so it silently skips when compinit
-hasn't run:
-```zsh
-if (( $+functions[compdef] )); then
-  compdef _agentws agentws
-fi
+Project JSON merges preserve unrelated settings. Conflicting managed entries
+fail safely unless `--force` is supplied. The generated Pi extension was loaded
+successfully by installed Pi 0.84.4. No real agent configuration was modified
+during development; tests and load checks used temporary paths.
+
+### Cross-repo dotenv wiring
+
+Config can declare per-repo `exposes`, `consumes`, and placeholder `defaults`.
+For example, `api.PORT` can feed `web.API_URL` as `{api.port}`. agentws maintains
+a story-specific marked block without replacing the rest of the dotenv file.
+
+Wiring runs after `new`, `add`, `remove`, `approve`, and `restore`, and can be
+rerun with `agentws rewire`. Paths must be relative, remain inside the worktree,
+and not traverse symlinks; keys and generated values are validated.
+
+### Fish activation
+
+Fish 4.9.3 was installed through Homebrew on this host. The real-shell E2E
+sources `agentws init-shell fish`, verifies cwd/env mutation, deactivation
+restoration, and one-shot command restoration.
+
+### Optional hard sandbox
+
+`agentws sandbox [--allow-network] [--allow-read PATH] [--allow-write PATH] --`
+`<command...>` uses macOS Seatbelt (`/usr/bin/sandbox-exec`). It permits the
+workspace and original-repo Git metadata, creates a private temporary directory,
+and denies network access by default. An E2E proves workspace and temp I/O work
+while outside reads and writes fail.
+
+This is macOS-only and opt-in. `sandbox-exec` is deprecated by Apple, so the
+normal design remains soft workspace scoping plus native agent permission
+prompts. The Pi extension's path guard is also a soft prompt; use `sandbox` when
+strict enforcement is required.
+
+---
+
+## 3. Key command surface
+
+```text
+agentws new/list/use/status/open/code/delete
+agentws add/remove/rewire/archive/restore
+agentws request/pending/history/approve/deny/approvals
+agentws mcp/mcp-config/integrate/sandbox
+agentws config/discover/completions/init-shell
 ```
-Now there's no warning in `zsh -c`, and completion still installs in interactive
-shells where compinit has run.
 
-**Fish:** implemented in `init_shell.rs` (`print_fish`) but **untested** — fish is
-not installed on this machine. Verify when convenient.
+`mcp-config` is retained as a manual-snippet alternative to `integrate`.
 
 ---
 
-## 5. File map (current, after the pivot)
+## 4. Configuration additions
 
+```toml
+[env.api]
+file = ".env.local"
+exposes = { port = "PORT" }
+
+[env.web]
+file = ".env.local"
+consumes = { API_URL = "http://localhost:{api.port}" }
+defaults = { "api.port" = "5000" }
 ```
-src/
-├── main.rs            # SIGPIPE reset → cli::run()
-├── cli.rs             # clap cmds: new/list/use/status/open/delete,
-│                      #   add/remove, request/approve/deny/pending,
-│                      #   archive/restore, mcp/mcp-config/completions,
-│                      #   init-shell, _list-stories(hidden)
-├── config.rs          # config.toml (repo_roots, symlinks, post_create)
-├── discovery.rs       # walk roots for git repos
-├── manifest.rs        # workspace.json + flock + resolve_story (chain) + .current
-├── worktree.rs        # git worktree add/remove, default-branch, dirty check
-├── ops.rs             # add/remove repo, symlinks, hooks, request ids
-├── picker.rs          # ratatui fuzzy multi-select
-├── mcp.rs             # MCP stdio server (3 tools) — dormant, works
-├── util.rs            # tilde expand
-└── commands/
-    ├── new.rs list.rs status.rs open.rs delete.rs use_ws.rs
-    ├── add.rs remove.rs expand.rs lifecycle.rs
-    ├── mcp_config.rs completions.rs
-    └── init_shell.rs   # conda-style activate/deactivate function (bash+zsh verified)
-```
-Deleted: `src/agent.rs`, `src/commands/launch.rs`.
+
+The dotenv reader intentionally handles ordinary `KEY=value`, quoted values,
+and optional `export`; it is not a shell evaluator and does not expand command
+substitutions or nested environment variables.
 
 ---
 
-## 6. How to build / install / use
+## 5. Verification
 
-```bash
-cd ~/coding/projects/agentws
-cargo build                              # dev
-cargo install --path . --locked --force  # → ~/.cargo/bin/agentws
+Current results:
 
-# config (one-time)
-mkdir -p ~/.config/agentws
-printf 'repo_roots = ["~/work"]\n' > ~/.config/agentws/config.toml
+```text
+cargo test --all-targets                   45 passed, 0 failed
+cargo clippy --all-targets -- -D warnings  clean
+```
 
-# shell integration (one-time, in your rc file)
-eval "$(agentws init-shell bash)"   # or zsh
+Breakdown: 37 library tests and 8 integration tests across story resolution,
+bulk delete safety, tmux approval, SQLite concurrency, Fish activation, and
+macOS Seatbelt. Pi extension loading is included in the library test suite.
 
-# core
-agentws new my-story --repos svc-a,svc-b
-agentws list
+The Seatbelt integration test must run outside an already restricted sandbox;
+ordinary local terminal runs need no special handling. Fish/Pi load tests skip
+portably when those binaries are absent, but both executed and passed on this
+host.
 
-# the conda flow (verified working)
-agentws activate my-story        # cd in + set $AGENTWS_WORKSPACE
-agentws activate my-story pi     # run pi in workspace, return
-agentws deactivate
+---
+
+## 6. File map
+
+```text
+src/manifest.rs               SQLite state/history + JSON migration
+src/integrations.rs           Pi/Claude/Codex/OpenCode integration installers
+src/ops.rs                    repo operations + dotenv wiring
+src/mcp.rs                    stdio MCP server + direct Pi bridge
+src/commands/approvals.rs     interactive/tmux watcher
+src/commands/env.rs           rewire command
+src/commands/integrate.rs     integration command
+src/commands/sandbox.rs       macOS Seatbelt wrapper
+tests/approvals_tmux.rs       isolated tmux E2E
+tests/fish_activation.rs      real Fish E2E
+tests/manifest_concurrency.rs concurrent SQLite E2E
+tests/sandbox_macos.rs        filesystem isolation E2E
 ```
 
 ---
 
-## 7. Commit state
+## 7. Commit state and next phase
 
-- 6 commits on `main`. The pivot, the zsh `compdef` guard, README, and this status
-  are all committed.
-- Tree is clean after the verification commit.
-
----
-
-## 8. Deferred / out of scope (per user)
-
-- pi MCP extension (user said "leave the mcp for now").
-- Fish verification (implemented, untested here).
-- tmux inline approval, SQLite manifest, env-file cross-repo wiring, optional hard
-  sandbox, prompt `[story]` marker, auto-activate on `new`. All noted in PLAN.md P3.
+- Branch: `master`; 12 existing commits.
+- P3 changes are uncommitted per `AGENTS.md`.
+- P4 remains: shared skill/AGENTS.md library and picker, per-repo guidance
+  honoring, and reusable workspace templates. See `PLAN.md` §12.

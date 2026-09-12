@@ -73,8 +73,8 @@ fn print_posix(shell: &str) -> Result<()> {
     let completion = if shell == "zsh" {
         r##"_agentws() {
   local -a subs stories
-  subs=(activate deactivate new list use status open code delete add remove
-        request pending approve deny archive restore mcp mcp-config
+  subs=(activate deactivate new list use status open code delete add remove rewire
+        request pending history approve deny approvals archive restore mcp mcp-config integrate sandbox
         completions init-shell)
   if (( CURRENT == 2 )); then
     _wanted commands expl 'command' compadd -- $subs

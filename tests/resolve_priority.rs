@@ -89,7 +89,7 @@ fn resolve_story_priority_chain() -> Result<()> {
     // step 5: exactly one workspace -> use it. Remove alpha's manifest so only
     // beta remains.
     std::env::set_current_dir(home.path())?;
-    std::fs::remove_file(alpha.join("workspace.json"))?;
+    std::fs::remove_file(alpha.join("workspace.db"))?;
     assert_eq!(manifest::resolve_story(None)?, "beta");
 
     Ok(())
