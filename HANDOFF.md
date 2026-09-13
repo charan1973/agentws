@@ -1,7 +1,7 @@
 # agentws — Handoff / Status
 
 **Date:** 2026-09-13
-**State:** P0-P4 complete. **59 tests green; strict Clippy green.**
+**State:** P0-P5 complete. **69 tests green.**
 
 > Read this first, then `PLAN.md`. This is the current implementation handoff.
 
@@ -18,7 +18,10 @@
   sandbox.
 - P4 is implemented: shared library/pickers, durable skill/guidance selections,
   root composition with repo-local honoring, refresh, and reusable templates.
-- P3 is commit `eb22453` on `master`; the P4 commit follows it.
+- P5 is implemented: safe bulk/`--all` deletion, MCP deletion previews, and
+  guarded uninstall with explicit config/binary opt-ins.
+- P4 is pushed as `6aa6fc6`; P5 changes are intentionally uncommitted pending
+  human review.
 
 ---
 
@@ -67,8 +70,9 @@ Workspace resolution is:
 `codex`, `opencode`, and `all`:
 
 - Pi: writes `.pi/extensions/agentws.ts` with native
-  `list_available_repos`, `request_repo`, and `check_request` tools plus a prompt
-  for path-based file operations outside the workspace.
+  `list_available_repos`, `request_repo`, `check_request`, and
+  `delete_workspaces` tools plus a prompt for path-based file operations outside
+  the workspace.
 - Claude: merges `mcpServers.agentws` into project `.mcp.json`.
 - OpenCode: merges `mcp.agentws` into project `opencode.json`.
 - Codex: calls `codex mcp add agentws -- <absolute-agentws> mcp`; this is a
@@ -113,7 +117,7 @@ strict enforcement is required.
 ## 3. Key command surface
 
 ```text
-agentws new/list/use/status/open/code/delete
+agentws new/list/use/status/open/code/delete/uninstall
 agentws add/remove/rewire/refresh/archive/restore
 agentws library list/add/remove
 agentws template list/show/save/delete/edit
@@ -186,14 +190,15 @@ order.
 Current results:
 
 ```text
-cargo test --all-targets                   59 passed, 0 failed
+cargo test --all-targets                   69 passed, 0 failed
 cargo clippy --all-targets -- -D warnings  clean
+cargo build --release --locked             clean
 ```
 
-Breakdown: 50 library tests and 9 integration tests across story resolution,
-bulk delete safety, tmux approval, SQLite concurrency, Fish activation, and
-macOS Seatbelt, plus the P4 template/composition lifecycle. Pi extension loading
-is included in the library test suite.
+Breakdown: 57 library tests and 12 integration tests across story resolution,
+bulk delete/uninstall safety, tmux approval, SQLite concurrency, Fish
+activation, macOS Seatbelt, and the P4 template/composition lifecycle. Pi
+extension loading is included in the library test suite.
 
 The Seatbelt integration test must run outside an already restricted sandbox;
 ordinary local terminal runs need no special handling. Fish/Pi load tests skip
@@ -219,18 +224,21 @@ src/commands/sandbox.rs       macOS Seatbelt wrapper
 src/commands/library.rs       library list/add/remove
 src/commands/template.rs      template list/show/save/delete/edit
 src/commands/refresh.rs       single/all-workspace composition refresh
+src/commands/delete.rs        shared delete planner, confirmation, execution
+src/commands/uninstall.rs     guarded global cleanup
 tests/approvals_tmux.rs       isolated tmux E2E
 tests/fish_activation.rs      real Fish E2E
 tests/manifest_concurrency.rs concurrent SQLite E2E
 tests/sandbox_macos.rs        filesystem isolation E2E
 tests/p4_composition.rs       P4 template/composition/lifecycle E2E
+tests/delete_bulk.rs          named/all/MCP deletion safety E2E
+tests/uninstall.rs            preview/confirmation/dirty preservation E2E
 ```
 
 ---
 
 ## 8. Commit state and next phase
 
-- Branch: `master`; P3 is pushed as `eb22453`.
-- P4 is complete and committed on `master`.
-- No scheduled implementation phase remains; §13 is an explicitly deferred
-  cleanup backlog.
+- Branch: `master`; P4 is pushed as `6aa6fc6`.
+- P5 cleanup/uninstall changes are uncommitted per `AGENTS.md`.
+- No planned implementation phase remains after P5.

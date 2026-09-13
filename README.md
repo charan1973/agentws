@@ -18,6 +18,7 @@ Each story gets a fresh directory — `~/.agentws/<story>/` — containing `git 
 - [Skills, guidance, and templates](#skills-guidance-and-templates)
 - [Configuration](#configuration)
 - [Permission-gated expansion](#permission-gated-expansion)
+- [Cleanup and uninstall](#cleanup-and-uninstall)
 - [Tips](#tips)
 
 ---
@@ -93,9 +94,9 @@ agentws list                                         # list workspaces, * marks 
 agentws status [story]                               # show repos, branches, requests
 agentws open <story>                                 # print workspace root path
 agentws use <story>                                  # set the global active pointer
-agentws delete [story...] [--dry-run] [--force] [--yes]   # remove worktrees + manifest;
-                                                     # bare `delete` = fuzzy multi-select;
-                                                     # dirty worktrees kept unless --force
+agentws delete [story...] [--all] [--dry-run] [--force] [--yes]
+                                                     # bare = fuzzy multi-select;
+                                                     # --all always requires typed confirmation
 ```
 
 ### Working inside a workspace
@@ -155,6 +156,8 @@ agentws completions zsh                                # generate shell completi
 agentws init-shell zsh                                 # print activate/deactivate function
 agentws config                                         # show resolved config + key paths
 agentws discover                                       # list discovered repos
+agentws uninstall [--dry-run] [--force]               # remove workspace footprint
+  [--include-config] [--include-binary] [--yes]       # confirmation is always mandatory
 ```
 
 `integrate` preserves unrelated settings and refuses to replace a conflicting
@@ -320,7 +323,8 @@ agentws integrate claude opencode  # .mcp.json + opencode.json
 agentws integrate codex            # Codex user-level MCP registration
 ```
 
-Pi's generated extension registers the three repo tools natively and prompts
+Pi's generated extension registers the three repo tools plus the safe
+`delete_workspaces` tool natively and prompts
 before path-based file tools leave the workspace. The other harnesses use the
 stdio MCP server. `agentws mcp-config <agent>` remains available when you prefer
 to copy a snippet manually.
@@ -328,6 +332,28 @@ to copy a snippet manually.
 Workspace state is authoritative in `workspace.db` (SQLite/WAL). Existing
 `workspace.json` manifests migrate automatically on first access and are kept as
 a backup. `agentws history` reads the append-only request event log.
+
+---
+
+## Cleanup and uninstall
+
+Bulk deletion accepts exact workspace names, a fuzzy picker when no names are
+given, or `--all`. Every plan reports each workspace's worktree count and dirty
+worktree count. Multi-workspace operations keep dirty workspaces unless
+`--force`; the legacy single-name form still removes a dirty workspace. `--yes`
+can skip the ordinary aggregate prompt, but `--all` always requires typing the
+eligible workspace count.
+
+The MCP `delete_workspaces` tool uses the same planner. It defaults to
+`dry_run=true`; actual deletion requires both `dry_run=false` and
+`confirmed=true`. It never exposes the CLI-only `--all` path.
+
+`agentws uninstall` always prints the complete removal plan and requires typing
+`uninstall`, even when `--yes` is passed. By default it removes eligible
+workspaces and the active pointer while preserving dirty workspaces. Add
+`--force` to remove dirty worktrees, `--include-config` to remove
+`~/.config/agentws` and its library, or `--include-binary` to remove the running
+executable. Use `--dry-run` to preview without prompting or changing anything.
 
 ---
 
@@ -344,7 +370,7 @@ a backup. `agentws history` reads the append-only request event log.
 
 ```bash
 cargo build                      # build
-cargo test                       # run unit + integration tests (59 tests)
+cargo test                       # run unit + integration tests (69 tests)
 cargo clippy --all-targets -- -D warnings
 cargo install --path . --locked  # install to ~/.cargo/bin/agentws
 ```
@@ -352,9 +378,9 @@ cargo install --path . --locked  # install to ~/.cargo/bin/agentws
 The crate exposes both a binary (`src/main.rs`) and a library (`src/lib.rs`), so
 the modules are testable: in-module unit tests (`#[cfg(test)]`) cover the pure
 functions and the git/worktree/discovery/manifest logic. The test suite covers
-story resolution, bulk deletion, concurrent SQLite writers, tmux approval, real
-Fish activation, Pi extension loading, macOS Seatbelt isolation, and the full
-P4 library/template/composition lifecycle.
+story resolution, bulk deletion and uninstall safety, concurrent SQLite writers,
+tmux approval, real Fish activation, Pi extension loading, macOS Seatbelt
+isolation, and the full P4 library/template/composition lifecycle.
 
 ---
 

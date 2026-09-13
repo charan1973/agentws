@@ -2,16 +2,19 @@
 
 use agentws::manifest;
 use chrono::Utc;
+use std::path::PathBuf;
 use std::process::Command;
 
 struct TmuxServer {
-    socket: String,
+    socket: PathBuf,
 }
 
 impl Drop for TmuxServer {
     fn drop(&mut self) {
         let _ = Command::new("tmux")
-            .args(["-L", &self.socket, "kill-server"])
+            .arg("-S")
+            .arg(&self.socket)
+            .arg("kill-server")
             .status();
     }
 }
@@ -51,7 +54,10 @@ fn tmux_mode_starts_a_dedicated_watcher_pane() {
     std::fs::write(root.join("workspace.json"), manifest_json).unwrap();
 
     let unique = format!("{}-{}", std::process::id(), Utc::now().timestamp_micros());
-    let socket = format!("aw-{unique}");
+    let socket_parent = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target");
+    std::fs::create_dir_all(&socket_parent).unwrap();
+    let socket_dir = tempfile::tempdir_in(socket_parent).unwrap();
+    let socket = socket_dir.path().join("tmux.sock");
     let session = format!("aw-{unique}");
     let marker = format!("aw-done-{unique}");
     let output_path = home.join("launcher-output.txt");
@@ -60,7 +66,9 @@ fn tmux_mode_starts_a_dedicated_watcher_pane() {
     };
 
     let started = Command::new("tmux")
-        .args(["-L", &socket, "new-session", "-d", "-s", &session])
+        .arg("-S")
+        .arg(&socket)
+        .args(["new-session", "-d", "-s", &session])
         .env("HOME", &home)
         .status()
         .unwrap();
@@ -76,9 +84,9 @@ fn tmux_mode_starts_a_dedicated_watcher_pane() {
         shell_quote(&marker),
     );
     let sent = Command::new("tmux")
+        .arg("-S")
+        .arg(&socket)
         .args([
-            "-L",
-            &socket,
             "send-keys",
             "-t",
             &format!("{session}:0.0"),
@@ -90,15 +98,17 @@ fn tmux_mode_starts_a_dedicated_watcher_pane() {
     assert!(sent.success(), "failed to run agentws inside tmux");
 
     let waited = Command::new("tmux")
-        .args(["-L", &socket, "wait-for", &marker])
+        .arg("-S")
+        .arg(&socket)
+        .args(["wait-for", &marker])
         .status()
         .unwrap();
     assert!(waited.success(), "agentws launcher did not finish");
 
     let panes = Command::new("tmux")
+        .arg("-S")
+        .arg(&socket)
         .args([
-            "-L",
-            &socket,
             "list-panes",
             "-t",
             &session,
@@ -129,7 +139,9 @@ fn tmux_mode_starts_a_dedicated_watcher_pane() {
         .find_map(|line| line.strip_prefix("1:"))
         .expect("watcher pane should have index 1");
     let denied = Command::new("tmux")
-        .args(["-L", &socket, "send-keys", "-t", watcher_pane, "d", "Enter"])
+        .arg("-S")
+        .arg(&socket)
+        .args(["send-keys", "-t", watcher_pane, "d", "Enter"])
         .status()
         .unwrap();
     assert!(denied.success(), "failed to answer the approval prompt");

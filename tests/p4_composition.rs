@@ -159,11 +159,12 @@ fn template_new_and_lifecycle_refresh_full_composition() -> Result<()> {
     assert_eq!(defaulted.setup.template.as_deref(), Some("stack"));
     assert_eq!(defaulted.repos[0].name, "api");
 
-    commands::delete::run(
-        vec!["p4-e2e".into(), "p4-default".into()],
-        false,
-        true,
-        true,
-    )?;
+    commands::delete::run(commands::delete::DeleteOptions {
+        stories: vec!["p4-e2e".into(), "p4-default".into()],
+        all: false,
+        dry_run: false,
+        force: true,
+        yes: true,
+    })?;
     Ok(())
 }

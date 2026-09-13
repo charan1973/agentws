@@ -20,4 +20,5 @@ pub mod remove;
 pub mod sandbox;
 pub mod status;
 pub mod template;
+pub mod uninstall;
 pub mod use_ws;

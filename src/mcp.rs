@@ -1,11 +1,11 @@
 //! Minimal MCP (Model Context Protocol) server over stdio.
 //!
-//! Speaks newline-delimited JSON-RPC 2.0. Exposes three tools that let an agent
-//! discover, request, and check the status of repos for its current workspace.
+//! Speaks newline-delimited JSON-RPC 2.0. Exposes tools that let an agent
+//! discover/request repos and safely preview or delete named workspaces.
 //! The current workspace is inferred from the process cwd (the agent's cwd),
 //! which is `~/.agentws/<story>`.
 
-use crate::{config, discovery, manifest, ops};
+use crate::{commands::delete, config, discovery, manifest, ops};
 use anyhow::Result;
 use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
@@ -99,6 +99,30 @@ fn tools() -> Vec<Value> {
                 "required": ["id"]
             }
         }),
+        json!({
+            "name": "delete_workspaces",
+            "description": "Preview or delete named agentws workspaces. Defaults to dry-run. Actual deletion requires dry_run=false and confirmed=true; dirty workspaces are kept unless force=true.",
+            "annotations": {
+                "readOnlyHint": false,
+                "destructiveHint": true,
+                "idempotentHint": false
+            },
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "stories": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "minItems": 1,
+                        "description": "Exact workspace names"
+                    },
+                    "dry_run": { "type": "boolean", "default": true },
+                    "force": { "type": "boolean", "default": false },
+                    "confirmed": { "type": "boolean", "default": false }
+                },
+                "required": ["stories"]
+            }
+        }),
     ]
 }
 
@@ -128,7 +152,37 @@ pub fn invoke(name: &str, args: &Value) -> Result<String> {
         "list_available_repos" => list_available_repos(args),
         "request_repo" => request_repo(args),
         "check_request" => check_request(args),
+        "delete_workspaces" => delete_workspaces(args),
         other => Err(anyhow::anyhow!("unknown tool '{other}'")),
+    }
+}
+
+fn delete_workspaces(args: &Value) -> Result<String> {
+    let stories = args
+        .get("stories")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("missing array 'stories'"))?
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .filter(|name| !name.is_empty())
+                .map(str::to_string)
+                .ok_or_else(|| anyhow::anyhow!("'stories' must contain non-empty strings"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let dry_run = bool_arg(args, "dry_run", true)?;
+    let force = bool_arg(args, "force", false)?;
+    let confirmed = bool_arg(args, "confirmed", false)?;
+    delete::run_noninteractive(stories, dry_run, force, confirmed)
+}
+
+fn bool_arg(args: &Value, name: &str, default: bool) -> Result<bool> {
+    match args.get(name) {
+        None => Ok(default),
+        Some(value) => value
+            .as_bool()
+            .ok_or_else(|| anyhow::anyhow!("'{name}' must be a boolean")),
     }
 }
 
@@ -265,4 +319,27 @@ fn notify(title: &str, body: &str) {
             .spawn();
     }
     eprintln!("[agentws] {t}: {b}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_catalog_exposes_safe_workspace_deletion() {
+        let catalog = tools();
+        let deletion = catalog
+            .iter()
+            .find(|tool| tool["name"] == "delete_workspaces")
+            .expect("delete_workspaces tool");
+        assert_eq!(
+            deletion["inputSchema"]["properties"]["dry_run"]["default"],
+            true
+        );
+        assert_eq!(
+            deletion["inputSchema"]["properties"]["confirmed"]["default"],
+            false
+        );
+        assert_eq!(deletion["annotations"]["destructiveHint"], true);
+    }
 }

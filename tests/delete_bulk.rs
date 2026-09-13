@@ -5,10 +5,12 @@
 //! Own test binary (separate process) so the HOME mutations here can't race
 //! with unit tests elsewhere — same isolation strategy as `resolve_priority.rs`.
 
-use agentws::{commands, manifest};
+use agentws::{commands, commands::delete::DeleteOptions, manifest};
 use anyhow::Result;
+use serde_json::json;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::Mutex;
 
 /// Serialize these tests within the binary: each mutates the global HOME via
@@ -71,6 +73,34 @@ fn setup(home: &Path) {
     }
 }
 
+fn delete_options(stories: &[&str], dry_run: bool, force: bool) -> DeleteOptions {
+    DeleteOptions {
+        stories: stories.iter().map(|story| (*story).to_string()).collect(),
+        all: false,
+        dry_run,
+        force,
+        yes: true,
+    }
+}
+
+fn run_cli(home: &Path, args: &[&str], input: &str) -> std::process::Output {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_agentws"))
+        .args(args)
+        .env("HOME", home)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
 #[test]
 fn bulk_delete_keeps_dirty_unless_force() -> Result<()> {
     let _guard = HOME_LOCK.lock().unwrap();
@@ -86,19 +116,14 @@ fn bulk_delete_keeps_dirty_unless_force() -> Result<()> {
     std::fs::write(ws_root("d2").join("rC").join("u.txt"), "x")?;
 
     // dry-run deletes nothing
-    commands::delete::run(vec!["clean".into()], true, false, true)?;
+    commands::delete::run(delete_options(&["clean"], true, false))?;
     assert!(
         ws_root("clean").exists(),
         "dry-run must not delete anything"
     );
 
     // bulk, no --force: clean deleted, dirty ones kept
-    commands::delete::run(
-        vec!["clean".into(), "d1".into(), "d2".into()],
-        false,
-        false,
-        true,
-    )?;
+    commands::delete::run(delete_options(&["clean", "d1", "d2"], false, false))?;
     assert!(
         !ws_root("clean").exists(),
         "clean workspace should be deleted"
@@ -113,7 +138,7 @@ fn bulk_delete_keeps_dirty_unless_force() -> Result<()> {
     );
 
     // bulk with --force: dirty ones now deleted
-    commands::delete::run(vec!["d1".into(), "d2".into()], false, true, true)?;
+    commands::delete::run(delete_options(&["d1", "d2"], false, true))?;
     assert!(
         !ws_root("d1").exists(),
         "dirty d1 should be deleted with --force"
@@ -137,7 +162,7 @@ fn single_delete_forces_dirty_legacy_behavior() -> Result<()> {
     commands::new::run("solo", Some(vec!["rA".into()]), None)?;
     std::fs::write(ws_root("solo").join("rA").join("u.txt"), "x")?; // dirty
 
-    commands::delete::run(vec!["solo".into()], false, false, true)?;
+    commands::delete::run(delete_options(&["solo"], false, false))?;
     assert!(
         !ws_root("solo").exists(),
         "single dirty workspace should be deleted (legacy force)"
@@ -160,8 +185,63 @@ fn delete_reports_missing_without_bailing() -> Result<()> {
     commands::new::run("real", Some(vec!["rA".into()]), None)?;
 
     // "ghost" doesn't exist; with a valid target also present it's skipped, not fatal.
-    commands::delete::run(vec!["real".into(), "ghost".into()], false, false, true)?;
+    commands::delete::run(delete_options(&["real", "ghost"], false, false))?;
     assert!(!ws_root("real").exists());
     assert!(manifest::load("ghost").is_err());
+    Ok(())
+}
+
+#[test]
+fn delete_all_requires_typed_count_even_with_yes() -> Result<()> {
+    let _guard = HOME_LOCK.lock().unwrap();
+    let home = fresh_home();
+    setup(home.path());
+    commands::new::run("one", Some(vec!["rA".into()]), None)?;
+    commands::new::run("two", Some(vec!["rB".into()]), None)?;
+
+    let rejected = run_cli(home.path(), &["delete", "--all", "--yes"], "y\n");
+    assert!(rejected.status.success());
+    assert!(ws_root("one").exists());
+    assert!(ws_root("two").exists());
+    assert!(String::from_utf8_lossy(&rejected.stdout).contains("type 2"));
+
+    let accepted = run_cli(home.path(), &["delete", "--all", "--yes"], "2\n");
+    assert!(accepted.status.success());
+    assert!(!ws_root("one").exists());
+    assert!(!ws_root("two").exists());
+    Ok(())
+}
+
+#[test]
+fn mcp_delete_defaults_to_preview_and_requires_confirmation() -> Result<()> {
+    let _guard = HOME_LOCK.lock().unwrap();
+    let home = fresh_home();
+    setup(home.path());
+    commands::new::run("mcp-target", Some(vec!["rA".into()]), None)?;
+    std::fs::write(ws_root("mcp-target").join("rA/u.txt"), "dirty")?;
+
+    let preview = agentws::mcp::invoke("delete_workspaces", &json!({ "stories": ["mcp-target"] }))?;
+    assert!(preview.contains("dry run"));
+    assert!(preview.contains("1 dirty"));
+    assert!(ws_root("mcp-target").exists());
+
+    let unconfirmed = agentws::mcp::invoke(
+        "delete_workspaces",
+        &json!({ "stories": ["mcp-target"], "dry_run": false }),
+    );
+    assert!(unconfirmed.is_err());
+    assert!(ws_root("mcp-target").exists());
+
+    let deleted = agentws::mcp::invoke(
+        "delete_workspaces",
+        &json!({
+            "stories": ["mcp-target"],
+            "dry_run": false,
+            "force": true,
+            "confirmed": true
+        }),
+    )?;
+    assert!(deleted.contains("deleted workspace 'mcp-target'"));
+    assert!(!ws_root("mcp-target").exists());
     Ok(())
 }

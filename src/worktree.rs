@@ -117,13 +117,20 @@ pub fn remove_worktree(origin: &Path, dest: &Path) -> Result<()> {
 
 /// Whether a worktree path has uncommitted changes.
 pub fn is_dirty(dest: &Path) -> bool {
-    Command::new("git")
+    if !dest.exists() {
+        return false;
+    }
+    match Command::new("git")
         .arg("-C")
         .arg(dest)
         .args(["status", "--porcelain"])
         .output()
-        .map(|o| !o.stdout.is_empty())
-        .unwrap_or(false)
+    {
+        Ok(output) if output.status.success() => !output.stdout.is_empty(),
+        // An existing path that Git cannot inspect is not safe to classify as
+        // clean. Bulk cleanup preserves it unless the human passes --force.
+        _ => true,
+    }
 }
 
 #[allow(dead_code)]
@@ -229,5 +236,14 @@ mod tests {
         make_repo(&origin);
         let res = add_worktree(&origin, &dest, "feat/x", "does-not-exist");
         assert!(res.is_err(), "should fail when base branch is absent");
+    }
+
+    #[test]
+    fn dirty_check_is_conservative_for_existing_non_git_paths() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plain = tmp.path().join("plain");
+        std::fs::create_dir(&plain).unwrap();
+        assert!(is_dirty(&plain));
+        assert!(!is_dirty(&tmp.path().join("missing")));
     }
 }

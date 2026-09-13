@@ -82,6 +82,27 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+  pi.registerTool({
+    name: "delete_workspaces",
+    label: "Delete Workspaces",
+    description: "Preview or delete named agentws workspaces. Preview is the default.",
+    promptSnippet: "Preview or delete named agentws workspaces",
+    promptGuidelines: [
+      "Call with dry_run=true first. Set dry_run=false and confirmed=true only when the user explicitly requested deletion.",
+    ],
+    parameters: Type.Object({
+      stories: Type.Array(Type.String({ description: "Exact workspace name" }), { minItems: 1 }),
+      dry_run: Type.Optional(Type.Boolean({ default: true })),
+      force: Type.Optional(Type.Boolean({ default: false })),
+      confirmed: Type.Optional(Type.Boolean({ default: false })),
+    }),
+    async execute(_id, params, signal, _update, ctx) {
+      const text = await callAgentws("delete_workspaces", params, signal, ctx.cwd);
+      ctx.ui.notify(text, "info");
+      return { content: [{ type: "text", text }], details: { deletion: params } };
+    },
+  });
+
   const pathTools = new Set(["read", "write", "edit", "grep", "find", "ls"]);
   pi.on("tool_call", async (event, ctx) => {
     if (!pathTools.has(event.toolName)) return undefined;
@@ -336,6 +357,7 @@ mod tests {
             "list_available_repos",
             "request_repo",
             "check_request",
+            "delete_workspaces",
             "tool_call",
             "outside the agentws workspace",
         ] {
@@ -359,12 +381,15 @@ mod tests {
                 extension.to_str().unwrap(),
                 "--list-models",
             ])
+            .env("PI_CODING_AGENT_DIR", tmp.path().join("pi-agent"))
             .current_dir(tmp.path())
             .output()
             .unwrap();
         assert!(
             output.status.success(),
-            "pi could not load generated extension:\n{}",
+            "pi could not load generated extension ({}):\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
     }

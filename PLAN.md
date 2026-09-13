@@ -194,7 +194,8 @@ agentws list                                  # all workspaces (* marks active)
 agentws status [story]                        # repos, branches, dirty, pending
 agentws open <story>                          # print root path (cd via shell wrapper)
 agentws use <story>                           # set the global active pointer
-agentws delete <story> [--yes]                # remove worktrees + manifest
+agentws delete [story...] [--all] [--dry-run] [--force] [--yes]
+agentws uninstall [--dry-run] [--force] [--include-config] [--include-binary]
 
 # expansion (human)
 agentws add <repo> [--story s] [--base b]     # add a repo now
@@ -260,7 +261,7 @@ agentws _list-stories                         # (hidden) story names for complet
 - [x] **Conda-style `activate`/`deactivate`** — sourced shell function via `init-shell` (bash, zsh, and Fish verified). `activate <story> [cmd]` does cd+env or one-shot passthrough.
 - [x] `$AGENTWS_WORKSPACE` added to `resolve_story` (priority #2); per-shell scoping, like `conda activate`.
 - [x] Hidden `_list-stories` subcommand to feed shell completion.
-- [x] **Test suite**: 50 unit tests + 9 integration tests. `cargo test --all-targets` and strict Clippy are green.
+- [x] **Test suite**: 57 unit tests + 12 integration tests. `cargo test --all-targets` and strict Clippy are green.
 - [x] Doc cleanup (PLAN.md, README.md, HANDOFF.md).
 
 ### P3 — Seamless + pi-native *(done)*
@@ -280,6 +281,12 @@ agentws _list-stories                         # (hidden) story names for complet
 - [x] central library (`~/.config/agentws/library/` + `library_dirs`) + picker: skills & AGENTS.md snippets in `new`
 - [x] per-repo skills/AGENTS honoring (root pointers + namespaced skill pool + explicit Pi settings)
 - [x] templates (`new --template`, `template save --from`, list/show/delete/edit, defaults + partial presets)
+
+### P5 — Cleanup and uninstall *(done — see §13)*
+- [x] bulk delete by names, fuzzy picker, or `--all`, with per-workspace dirty counts
+- [x] dirty-worktree preservation, dry-run, aggregate confirmation, and mandatory typed `--all` confirmation
+- [x] MCP `delete_workspaces` preview/confirmed-deletion path
+- [x] uninstall preview + mandatory confirmation; config and binary removal are explicit opt-ins
 
 ## 10. Project structure
 
@@ -306,14 +313,14 @@ agentws/
 │   └── commands/
 │       ├── new list status open delete use_ws
 │       ├── add remove expand lifecycle
-│       ├── approvals env integrate sandbox library template refresh
+│       ├── approvals env integrate sandbox library template refresh uninstall
 │       ├── config discover mcp_config completions
 │       ├── init_shell                   # conda-style activate/deactivate function
 │       └── mod.rs
 └── tests/
     ├── approvals_tmux.rs delete_bulk.rs resolve_priority.rs
     ├── fish_activation.rs manifest_concurrency.rs
-    ├── sandbox_macos.rs
+    ├── sandbox_macos.rs uninstall.rs
     └── p4_composition.rs
 ```
 
@@ -450,49 +457,44 @@ Records selections so `refresh`, `status`, and `template save --from` work.
 4. Pi's installed documentation confirms `AGENTS.md`/`CLAUDE.md` loading; the
    explicit settings path remains as the strongest skill-discovery guarantee.
 
-## 13. Backlog — workspace cleanup ops (nice-to-have, NOT scheduled yet)
+## 13. P5: workspace cleanup and uninstall
 
-> Lower priority than P3 (§9) and P4 (§12). Captured so it isn't forgotten.
-> **Do not implement yet** — other work comes first.
+**Status: implemented and E2E-tested.**
 
-### 13.1 Uninstall / global cleanup with dry-run
-
-Remove agentws's footprint, gated behind a mandatory dry-run that lists exactly
-what will go before changing anything.
+### 13.1 Uninstall / global cleanup
 
 ```
-agentws uninstall --dry-run     # enumerate everything that would be removed; change nothing
-agentws uninstall               # actually remove — MANDATORY confirm (`--yes` cannot bypass)
+agentws uninstall --dry-run
+agentws uninstall [--force] [--include-config] [--include-binary] [--yes]
 ```
 
-Dry-run must show, per workspace: name, repo/worktree count, and how many
-worktrees carry **uncommitted changes**. Per §13.2, dirty worktrees are **kept by
-default** (`--force` opts in to removing them) — so the dry-run surfaces them
-rather than warning of silent deletion. Scope TBD: just `~/.agentws/<story>/` workspaces + the `.current`
-pointer by default, with config dir + installed binary behind explicit flags.
+Every invocation prints the same complete removal plan first. `--dry-run` stops
+there; an actual uninstall requires typing the exact word `uninstall`, and
+`--yes` deliberately cannot bypass that prompt. The plan shows, per workspace,
+its worktree count and dirty-worktree count. Dirty workspaces are preserved by
+default and `--force` explicitly opts into deleting them.
 
-### 13.2 Bulk delete (backlog — shape agreed, not scheduled)
+Default scope is registered workspaces, the `.current` pointer, and the
+workspace root when it will become empty. `--include-config` separately opts
+into deleting `~/.config/agentws/` (including the reusable library), while
+`--include-binary` opts into deleting the running executable. Targets are
+validated before any removal. If Git refuses a worktree removal, the containing
+workspace is retained and config/binary cleanup stops.
 
-Two entry points sharing one deletion path:
+### 13.2 Bulk delete
 
-- **Interactive:** fuzzy multi-select of workspaces → confirm → delete chosen set.
-  The fuzzy multi-select machinery already exists in `src/picker.rs`
-  (`toggle_selected` / `chosen()` / `HashSet`), but is typed to `discovery::Repo`;
-  needs generalizing (generic over `T`, or a workspace picker). Moderate effort.
-- **Agent/script-accessible:** accept multiple positionals — `agentws delete ws-1 ws-2 ws-3`
-  — backward compatible with the single-name form. **No `--bulk` flag**; bare
-  `agentws delete` (no args) opens the fuzzy picker instead.
+`agentws delete [ws...] [--all] [--dry-run] [--force] [--yes]` supports:
 
-Resolved shape: `agentws delete [ws...] [--all] [--dry-run] [--force] [--yes]`.
+- exact names for scripts, or a fuzzy multi-select when no names are supplied;
+- `--all`, which always requires typing the eligible workspace count even when
+  `--yes` is present;
+- a shared plan that reports workspace, worktree, and dirty-worktree counts;
+- preservation of dirty workspaces in picker/multi-name/`--all` modes unless
+  `--force` is supplied; single-name deletion retains its legacy force behavior;
+- best-effort processing across a batch with explicit failures and retained
+  workspace directories when Git worktree removal fails; branches are kept.
 
-Shared with 13.1: `--dry-run` (workspace + worktree + dirty counts), one
-aggregate `[y/N]` confirm for the batch (skippable via `--yes`), branches kept
-(surfaced in dry-run), and an MCP `delete_workspaces` tool mirroring `request_repo`.
-
-Safety semantics (resolved):
-- **Dirty worktrees are kept by default** — bulk delete lists and skips them; no
-  worktree with uncommitted changes is removed unless `--force` is passed. (Today's
-  single-name `delete` forces unconditionally and stays that way; only bulk adds the
-  safer default.)
-- **`--all` mandates explicit confirmation** that `--yes` cannot bypass — deleting
-  every workspace always prompts (e.g. retype the count to proceed).
+The MCP/Pi-native `delete_workspaces` tool shares this planner. It requires exact
+workspace names, defaults to `dry_run=true`, and requires both `dry_run=false`
+and `confirmed=true` for an actual deletion. The human-only `--all` operation is
+not exposed through MCP.

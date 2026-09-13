@@ -69,13 +69,35 @@ pub enum Command {
     Delete {
         /// Workspace names to delete. With none, opens the fuzzy picker.
         stories: Vec<String>,
+        /// Delete every workspace. Always requires typed confirmation.
+        #[arg(long, conflicts_with = "stories")]
+        all: bool,
         /// List what would be deleted and change nothing.
         #[arg(long)]
         dry_run: bool,
         /// Also delete workspaces with uncommitted changes (kept by default).
         #[arg(long)]
         force: bool,
-        /// Skip the confirmation prompt.
+        /// Skip the ordinary confirmation prompt (`--all` still prompts).
+        #[arg(long)]
+        yes: bool,
+    },
+
+    /// Remove agentws workspaces and optionally its configuration and binary.
+    Uninstall {
+        /// Print the complete removal plan and change nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Also remove workspaces whose worktrees contain uncommitted changes.
+        #[arg(long)]
+        force: bool,
+        /// Also remove ~/.config/agentws, including the reusable library.
+        #[arg(long)]
+        include_config: bool,
+        /// Also remove the currently running agentws executable.
+        #[arg(long)]
+        include_binary: bool,
+        /// Accepted for automation, but never bypasses uninstall confirmation.
         #[arg(long)]
         yes: bool,
     },
@@ -276,10 +298,30 @@ pub fn run() -> Result<()> {
         Command::Code { story } => commands::code::run(story),
         Command::Delete {
             stories,
+            all,
             dry_run,
             force,
             yes,
-        } => commands::delete::run(stories, dry_run, force, yes),
+        } => commands::delete::run(commands::delete::DeleteOptions {
+            stories,
+            all,
+            dry_run,
+            force,
+            yes,
+        }),
+        Command::Uninstall {
+            dry_run,
+            force,
+            include_config,
+            include_binary,
+            yes,
+        } => commands::uninstall::run(commands::uninstall::UninstallOptions {
+            dry_run,
+            force,
+            include_config,
+            include_binary,
+            yes,
+        }),
         Command::Add { repo, story, base } => commands::add::run(story, repo, base),
         Command::Remove { repo, story } => commands::remove::run(story, repo),
         Command::Rewire { story } => commands::env::rewire(story),
